@@ -65,6 +65,8 @@ class SurfaceAdapter(Protocol):
     def read(self, res: Resolution) -> str: ...
     def current_url(self) -> str: ...
     def contains_text(self, text: str, case_sensitive: bool = False) -> bool: ...
+    def pending_dialogs(self) -> list[dict[str, str]]: ...
+    def find_role_anywhere(self, role: str) -> str | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +99,76 @@ class WebSurfaceAdapter:
 
     def __init__(self, page: Page):
         self.page = page
+        # Every native dialog seen since the session opened, oldest first:
+        # [{"type": "confirm", "message": "Post this transaction?"}, ...]
+        self.dialogs: list[dict[str, str]] = []
+        self.last_status: int | None = None
+        self.last_nav_error: str | None = None
+        self._register_dialog_handler()
+
+    def _register_dialog_handler(self) -> None:
+        """Make native dialogs observable.
+
+        Not because they block the run — measured against the mock app's
+        `native_confirm` fault, they do not. With no handler registered
+        Playwright silently *auto-dismisses*, so `onclick="return confirm(...)"`
+        returns false, the form never submits, and `click()` returns success in
+        0.0 seconds. The run then believes it posted a transaction that never
+        happened, and no checkpoint on the click itself can catch it.
+
+        So the handler exists to record. Dismissing stays the default action —
+        accepting an unmodeled dialog means answering "yes" to a question nobody
+        read — but the dialog is now in `self.dialogs`, where `dialog_present`
+        can see it and the unmodeled-blocker check can escalate on it. That
+        turns a silent no-op into a visible one.
+        """
+        def handler(dialog):
+            self.dialogs.append({"type": dialog.type, "message": dialog.message})
+            try:
+                dialog.dismiss()
+            except Exception:
+                pass  # already handled by a one-shot accept listener
+
+        self.page.on("dialog", handler)
+
+    def accept_next_dialog(self) -> None:
+        """Answer 'yes' to the next native dialog instead of dismissing it.
+
+        Only for a dialog a capability has *declared* — a recorded confirm step
+        whose handler says to accept it. Never the default.
+        """
+        def once(dialog):
+            self.dialogs.append({"type": dialog.type, "message": dialog.message})
+            try:
+                dialog.accept()
+            finally:
+                self.page.remove_listener("dialog", once)
+
+        self.page.on("dialog", once)
+
+    def pending_dialogs(self) -> list[dict[str, str]]:
+        return list(self.dialogs)
+
+    def find_role_anywhere(self, role: str) -> str | None:
+        """Search every frame for a control of this role; return its name.
+
+        Frame-agnostic on purpose. A `ControlRef` is scoped to the frame it was
+        recorded in, which is right for a step's own target — but a modal is not
+        a recorded target, and in a frameset app it appears in whichever pane
+        raised it. Asking only the main frame is how an undeclared dialog in
+        `detailFrame` stays invisible.
+        """
+        for fr in self._frames():
+            try:
+                loc = fr.get_by_role(role)  # type: ignore[arg-type]
+                if loc.count() > 0:
+                    first = loc.first
+                    return (first.get_attribute("aria-label")
+                            or (first.inner_text() or "").strip()[:200]
+                            or role)
+            except Exception:
+                continue
+        return None
 
     # --- perception -------------------------------------------------------
 
@@ -280,7 +352,17 @@ class WebSurfaceAdapter:
     # --- action -----------------------------------------------------------
 
     def navigate(self, url: str) -> None:
-        self.page.goto(url, wait_until="load")
+        # The response status is kept because `load_failed` has to tell a served
+        # error page from a page that never arrived. Both are failures, and both
+        # look like "some HTML rendered" to a text detector.
+        try:
+            response = self.page.goto(url, wait_until="load")
+            self.last_status = response.status if response else None
+            self.last_nav_error = None
+        except Exception as exc:
+            self.last_status = None
+            self.last_nav_error = f"{type(exc).__name__}: {exc}"
+            raise
 
     def click(self, res: Resolution) -> None:
         assert res.locator is not None

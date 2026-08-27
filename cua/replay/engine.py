@@ -98,7 +98,68 @@ class ReplayEngine:
                 return False
             res = self.a.resolve(d.control)
             return res.ok and self.a.read(res) == (d.value or "")
+        if d.kind == "dialog_present":
+            return self._dialog_matching(d.value) is not None
+        if d.kind == "load_failed":
+            return self._load_failed(d.value)
         return False
+
+    def _dialog_matching(self, needle: str | None) -> dict | None:
+        """A blocking dialog, native or in-page.
+
+        Both are covered because the distinction is an implementation detail of
+        the surface, not of the flow: to a capability, "a modal is in the way"
+        is one condition. Native dialogs come from the adapter's recorded
+        handler; in-page ones are an ARIA `dialog`/`alertdialog` role.
+        """
+        for dlg in getattr(self.a, "pending_dialogs", list)():
+            if not needle or needle.lower() in dlg.get("message", "").lower():
+                return dlg
+        find = getattr(self.a, "find_role_anywhere", None)
+        for role in ("dialog", "alertdialog"):
+            label = find(role) if find else None
+            if label is None:
+                continue
+            if not needle or needle.lower() in label.lower() or self.a.contains_text(needle):
+                return {"type": role, "message": label}
+        return None
+
+    def _load_failed(self, needle: str | None) -> bool:
+        """A page that did not arrive, or arrived as an error.
+
+        Deliberately distinct from slow. Slow is RECOVERABLE and detector
+        polling already covers it; failed is a HARD_FAILURE, and conflating them
+        means retrying something that will never succeed. An HTTP error page is
+        the case a text detector cannot see on its own — the server returns a
+        perfectly well-formed document saying the operation broke.
+        """
+        if getattr(self.a, "last_nav_error", None):
+            return True
+        status = getattr(self.a, "last_status", None)
+        if status is not None and status >= 400:
+            return True
+        return bool(needle) and self.a.contains_text(needle or "")
+
+    def _unmodeled_blocker(self, art: CapabilityArtifact, step: Step) -> dict | None:
+        """A modal nobody recorded.
+
+        The declarative ConditionHandler model covers conditions someone thought
+        of. An unexpected dialog has, by construction, no handler — so the check
+        cannot be declarative and lives here instead. The disposition is
+        *escalate*, not fail: a novel modal in a bank application is precisely
+        where a human should look, and precisely not where automation should
+        retry or give up. A dialog the capability *does* declare is not
+        unmodeled, and its handler runs as normal.
+        """
+        blocker = self._dialog_matching(None)
+        if blocker is None:
+            return None
+        declared = [h for h in (*art.global_conditions, *step.conditions)
+                    if h.detect.kind == "dialog_present"]
+        for handler in declared:
+            if self._evaluate(handler.detect):
+                return None
+        return blocker
 
     def _check(self, cp: Checkpoint) -> bool:
         """Poll until satisfied or timeout. Never a fixed sleep."""
@@ -450,6 +511,24 @@ class ReplayEngine:
                     return self._escalated_result(art, run_id, req, step,
                                                   "no progress")
                 self._recent_digests.clear()
+                resumed = self._after_human_fixed_it(art, run_id, step, rec, attempt)
+                if resumed == "skip":
+                    return None
+                if resumed is not None:
+                    return resumed
+                continue
+
+            # --- unmodeled blocker, before anything reads the surface ---
+            blocker = self._unmodeled_blocker(art, step)
+            if blocker is not None:
+                detail = (f"unmodeled {blocker['type']} blocking the surface: "
+                          f"{blocker['message'] or '(no message)'}")
+                before = self.a.snapshot().tree
+                req = self.escalate(StuckReason.CONDITION_ESCALATE, detail,
+                                    run_id=run_id, capability_id=art.capability_id,
+                                    step=step, params=redact_params(params, art.inputs))
+                if not self._pause_for_human(req, before):
+                    return self._escalated_result(art, run_id, req, step, detail)
                 resumed = self._after_human_fixed_it(art, run_id, step, rec, attempt)
                 if resumed == "skip":
                     return None
