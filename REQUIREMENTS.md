@@ -4,7 +4,11 @@ Every bullet in Section 3 mapped to the component that satisfies it. Maintained
 during the build so no requirement quietly falls off. `DESIGN.md` §-numbers in
 brackets.
 
-Status key: **✅ designed** · **🔨 to build** · **🧪 mocked at a seam**
+Status key: **✔ verified by execution** · **✅ designed** · **🔨 to build** · **🧪 mocked at a seam**
+
+`✅` means the design covers it and the code is present; `✔` means it was actually
+run and observed. Everything below `3.3` that moved to `✔` was verified against the
+live mock app, and the evidence directory is named in the row where there is one.
 
 ---
 
@@ -40,15 +44,15 @@ Status key: **✅ designed** · **🔨 to build** · **🧪 mocked at a seam**
 
 | Requirement | Where | Status |
 |---|---|---|
-| Replay from artifact + params, no LLM in decision loop | `replay/engine.py` [§4] | 🔨 |
-| Stable control targeting | `replay/resolver.py`, ranked, ambiguity = failure | 🔨 |
-| Verify checkpoint / success condition | global → step → checkpoint order | 🔨 |
-| Return declared outputs | `ReplayResult.outputs` | ✅ |
-| **Runtime condition: validation error** | `ConditionHandler` → `BUSINESS_OUTCOME` | ✅ |
-| **Runtime condition: record not found** | `ConditionHandler` → `BUSINESS_OUTCOME` | ✅ |
+| Replay from artifact + params, no LLM in decision loop | `replay/engine.py` [§4] | ✔ |
+| Stable control targeting | `surface/web.py` `resolve()`, ranked, ambiguity = failure | ✔ |
+| Verify checkpoint / success condition | global → step → checkpoint order | ✔ |
+| Return declared outputs | `ReplayResult.outputs` | ✔ |
+| **Runtime condition: validation error** | `ConditionHandler` → `BUSINESS_OUTCOME`; four in the sub-account flow | ✅ |
+| **Runtime condition: record not found** | `ConditionHandler` → `BUSINESS_OUTCOME` | ✔ |
 | **Runtime condition: permission denial** | global `ConditionHandler` → `HARD_FAILURE` | ✅ |
 | **Runtime condition: unexpected dialog** | `dialog_present` detector + unmodeled-blocker check — **gap 2, closed** | ✅ |
-| **Runtime condition: session timeout** | global `ConditionHandler` → `RECOVERABLE`, `reauthenticate` | ✅ |
+| **Runtime condition: session timeout** | global `ConditionHandler` → `RECOVERABLE`, `reauthenticate` → **flow restart** | ✔ |
 | **Runtime condition: transient slowness** | detector polling to `timeout_ms`, `retry_step` recovery | ✅ |
 | **Runtime condition: slow/failed load** | `load_failed` detector — **gap 3, closed** | ✅ |
 | Separate expected business outcomes | `Disposition.BUSINESS_OUTCOME` → `ReplayStatus.BUSINESS_OUTCOME` | ✅ |
@@ -60,11 +64,11 @@ Status key: **✅ designed** · **🔨 to build** · **🧪 mocked at a seam**
 
 | Requirement | Where | Status |
 |---|---|---|
-| Configurable allowlist — permitted domains/routes | `allowlist.url_patterns` [§6] | 🔨 |
-| Configurable allowlist — permitted action types | `allowlist.allowed_actions` | 🔨 |
-| Agent must not act outside it | `PolicyGate.check()`, single chokepoint, both paths | 🔨 |
-| Enforced on browser-initiated navigation | Playwright route interceptor | 🔨 |
-| Distinguish safe/reversible from risky/irreversible | `RiskClass` recorded per step at discovery | ✅ |
+| Configurable allowlist — permitted domains/routes | `allowlist.url_patterns`; `auth_url_patterns` for platform-only routes [§6] | ✔ |
+| Configurable allowlist — permitted action types | `allowlist.action_kinds` | ✔ |
+| Agent must not act outside it | `PolicyGate.check()`, single chokepoint, both paths | ✔ |
+| Enforced on browser-initiated navigation | Playwright route interceptor | ✔ |
+| Distinguish safe/reversible from risky/irreversible | `RiskClass` per step; the sub-account post is the `IRREVERSIBLE` case | ✅ |
 | Handle risky class conservatively | `max_risk_unattended` → `CONFIRM` → escalate (justified in `REPORT.md` §6) | ✅ |
 | Never persist secrets | `{{secret:name}}` refs resolved from env at replay | ✅ |
 | Never persist raw PII in artifacts | `Sensitivity` labels; `example` never auto-populated — **gap 4, closed** | ✅ |
@@ -74,8 +78,8 @@ Status key: **✅ designed** · **🔨 to build** · **🧪 mocked at a seam**
 
 | Requirement | Where | Status |
 |---|---|---|
-| Structured log of what the agent did | `evidence/writer.py`, per-run JSONL | 🔨 |
-| **And why** | `intent` captured per action at decision time | ✅ |
+| Structured log of what the agent did | `evidence.py`, per-run JSONL, `step_start`/`step_end` streamed | ✔ |
+| **And why** | `intent` captured per action, carried into the log line | ✔ |
 | At least one richer signal on failure | screenshot + a11y snapshot, refs in `FailureDetail.evidence_refs` | 🔨 |
 
 ## 3.6 Human-in-the-loop escalation & handoff
@@ -129,9 +133,16 @@ construction, no handler. Two fixes:
   recorded observation, the run **escalates** rather than failing. This is the
   right disposition — a novel modal in a bank app is exactly the case where a
   human should look, not where automation should retry or give up.
-- Native browser dialogs (`alert`/`confirm`/`beforeunload`) block Playwright
-  entirely, so the adapter registers a dialog handler at session open and
-  surfaces them through the same path.
+- Native browser dialogs (`alert`/`confirm`/`beforeunload`) need a handler
+  registered at session open. The original justification here — that they block
+  Playwright entirely — is **wrong, and the truth is worse.** Measured against
+  the mock app's `native_confirm` fault: with no handler, Playwright silently
+  auto-*dismisses* the dialog. `onclick="return confirm(...)"` therefore returns
+  false, the form never submits, and `click()` returns in 0.0s reporting
+  success. The run believes it posted a transaction that never happened, and no
+  checkpoint on the *click* can catch it. Registering the handler is what makes
+  the dialog observable at all, and it is the only reason `dialog_present` can
+  ever fire.
 
 **Gap 3 — no load-failure detector.** 3.3 names "slow/failed load" as one
 condition, but slow and failed want opposite dispositions: slow is
