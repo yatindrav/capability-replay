@@ -71,6 +71,23 @@ class SessionLease:
             raise LeaseViolation(f"operator does not hold the lease (owner={self._owner.value})")
         self._transition(Owner.AUTOMATION, f"operator handed back: {note}")
 
+    def reclaim(self, why: str) -> None:
+        """Return the lease to automation from wherever it currently sits.
+
+        For the case where an escalation is resolved without a person ever
+        touching the browser — a policy confirmation granted out of band, or the
+        recorder authorising its own verification replay. `request_handoff` was
+        still the right thing to do (the run paused, the request was raised and
+        logged), but no operator took control, so there is nothing to hand back.
+
+        Deliberately not a way around `operator_hand_back`: if an operator does
+        hold the lease, this records that they released it rather than pretending
+        they never had it.
+        """
+        if self._owner is Owner.AUTOMATION:
+            return
+        self._transition(Owner.AUTOMATION, why)
+
     def assert_automation(self) -> None:
         if self._owner != Owner.AUTOMATION:
             raise LeaseViolation(

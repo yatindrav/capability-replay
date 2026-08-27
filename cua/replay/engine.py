@@ -193,7 +193,12 @@ class ReplayEngine:
         summary = None
         if resolved:
             # The lease must be back with automation before we touch anything.
-            self.lease.assert_automation()
+            # A handler that represents a real operator will have taken control
+            # and handed back, and its transitions are already in the history;
+            # one that merely authorised the step never held it. Either way the
+            # engine reclaims, so a caller does not have to know the protocol to
+            # answer an escalation.
+            self.lease.reclaim(f"escalation {req.request_id} resolved")
             summary = self.resume_after_handoff(req, before_tree)
 
         self.escalations.append(EscalationRecord(

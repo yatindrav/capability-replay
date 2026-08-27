@@ -69,3 +69,27 @@ def test_history_records_every_transition_with_a_reason(lease):
     hist = lease.history()
     assert [h["to"] for h in hist] == ["pending_handoff", "operator", "automation"]
     assert all(h["why"] and h["at"] for h in hist)
+
+
+def test_reclaim_returns_control_when_nobody_took_it(lease):
+    """An escalation resolved out of band: raised, answered, never held."""
+    lease.request_handoff("risk gate")
+    lease.reclaim("authorised without an operator")
+    assert lease.owner is Owner.AUTOMATION
+    lease.assert_automation()
+    assert lease.history()[-1]["from"] == "pending_handoff"
+
+
+def test_reclaim_records_a_release_rather_than_erasing_the_handoff(lease):
+    lease.request_handoff("risk gate")
+    lease.operator_take_control()
+    lease.reclaim("operator session ended")
+    assert lease.owner is Owner.AUTOMATION
+    assert [h["to"] for h in lease.history()] == [
+        "pending_handoff", "operator", "automation"]
+
+
+def test_reclaim_is_a_no_op_when_automation_already_holds_it(lease):
+    lease.reclaim("nothing to do")
+    assert lease.owner is Owner.AUTOMATION
+    assert lease.history() == []

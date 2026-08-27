@@ -26,7 +26,8 @@ from cua.surface.session import bootstrap_session
 from cua.surface.web import WebSurfaceAdapter
 
 REPO = Path(__file__).resolve().parent.parent
-ARTIFACT = REPO / "capabilities" / "member.savings_balance.read.v1.json"
+ARTIFACT = (REPO / "capabilities" / "acme-servicing"
+            / "member.savings_balance.read" / "v1.json")
 ALLOWLIST = REPO / "config" / "allowlist.yaml"
 
 

@@ -406,7 +406,18 @@ class Provenance(BaseModel):
 
 
 class ApprovalState(str, Enum):
+    """Three gates, not two.
+
+    `DRAFT_VERIFIED` is the one that carries information a human cannot supply:
+    the recorder replayed this artifact once, with no model and the same
+    parameters, and it worked. That is a machine-checkable claim, and it sits
+    below `APPROVED`, which remains a human judgement about whether the
+    capability *should* exist. An artifact that never reaches DRAFT_VERIFIED is
+    not written to `capabilities/` at all.
+    """
+
     DRAFT = "draft"
+    DRAFT_VERIFIED = "draft_verified"
     APPROVED = "approved"
     DEPRECATED = "deprecated"
 

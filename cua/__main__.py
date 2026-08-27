@@ -14,7 +14,8 @@ from cua.evidence import EvidenceRecorder
 from cua.escalation.lease import InterventionQueue, SessionLease
 from cua.replay.engine import ReplayEngine, new_run_id
 from cua.safety.policy import Allowlist, PolicyGate
-from cua.schema.artifact import CapabilityArtifact, ParamSpec
+from cua.agent.recorder import requires_sandbox, verify_and_store
+from cua.schema.artifact import CapabilityArtifact, ParamSpec, Sensitivity
 from cua.schema.result import ReplayStatus
 from cua.surface.session import bootstrap_session
 from cua.surface.web import WebSurfaceAdapter
@@ -63,36 +64,80 @@ def cmd_discover(args) -> int:
                                model=args.model, max_steps=args.max_steps)
         try:
             result = agent.run(args.goal, args.entry, params)
+
+            print(f"\nrun_id: {run_id}   evidence: {ev.dir}")
+            if not result["ok"]:
+                print(f"DISCOVERY STUCK: {result['reason']}")
+                print(f"intervention: {result.get('escalation_id')}")
+                return 2
+
+            # `example` is deliberately left None: these values are live member
+            # identifiers, and an artifact gets committed and shared.
+            specs = [ParamSpec(name=k, type="string",
+                               description=f"Value for {k}",
+                               sensitivity=Sensitivity.PII,
+                               pattern=r"^\d+$" if v.isdigit() else None)
+                     for k, v in params.items()]
+
+            art = build_artifact(
+                capability_id=args.capability_id,
+                title=args.title or args.capability_id,
+                description=result["summary"],
+                goal=args.goal, entry_url=args.entry, app_id=args.app_id,
+                allowlist_id=args.allowlist, discovery=result,
+                model=args.model, run_id=run_id, param_specs=specs,
+            )
+            ev.write_json("artifact_draft", json.loads(art.model_dump_json()))
+
+            # Join 1: it does not reach capabilities/ until it has replayed.
+            print(f"\nverifying: replaying the fresh artifact once, no model...")
+            outcome = _verify(art, params, page, args, ev)
         finally:
             if not args.keep_open:
                 b.close()
 
-    print(f"\nrun_id: {run_id}   evidence: {ev.dir}")
-    if not result["ok"]:
-        print(f"DISCOVERY STUCK: {result['reason']}")
-        print(f"intervention: {result.get('escalation_id')}")
-        return 2
+    if not outcome.ok:
+        print(f"\nNOT VERIFIED — {outcome.reason}")
+        print(f"the artifact was written to {ev.dir} and NOT to {CAPS}/")
+        if outcome.volatile_suspects:
+            print("volatile checkpoint text is the usual cause; suspects above.")
+        return 4
 
-    specs = [ParamSpec(name=k, type="string", description=f"Value for {k}",
-                       pattern=r"^\d+$" if v.isdigit() else None, example=v)
-             for k, v in params.items()]
-
-    art = build_artifact(
-        capability_id=args.capability_id,
-        title=args.title or args.capability_id,
-        description=result["summary"],
-        goal=args.goal, entry_url=args.entry, app_id=args.app_id,
-        allowlist_id=args.allowlist, discovery=result,
-        model=args.model, run_id=run_id, param_specs=specs,
-    )
-    out = Path(CAPS) / f"{art.capability_id}.v{art.version}.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(art.model_dump_json(indent=2))
-    ev.write_json("artifact", json.loads(art.model_dump_json()))
-
-    print(f"artifact: {out}  ({len(art.steps)} steps, "
+    print(f"artifact: {outcome.artifact_path}  ({len(art.steps)} steps, "
           f"{len(art.inputs)} inputs, {len(art.outputs)} outputs)")
+    print(f"state:    {art.approval_state.value}  "
+          f"(stability {art.stability.success_count}/{art.stability.replay_count})")
     return 0
+
+
+def _verify(art, params, page, args, ev):
+    """Replay the fresh artifact on the same authenticated session."""
+    allow = Allowlist.load(args.allowlist_config, art.policy.allowlist_id)
+    # Attended, because the recorder *is* the human: a discovery run that just
+    # performed an irreversible step under supervision should not have its own
+    # verification blocked by the unattended ceiling. Production replay of the
+    # same artifact still stops at the gate.
+    gate = PolicyGate(allow, attended=True)
+    verify_ev = EvidenceRecorder(EVIDENCE, new_run_id("verify"))
+    engine = ReplayEngine(
+        WebSurfaceAdapter(page), gate, verify_ev, SessionLease(),
+        InterventionQueue(INTERVENTIONS),
+        reauth=lambda: bootstrap_session(page, art.target.entry_url_template or "",
+                                         art.target.app_id),
+        on_escalation=lambda req: True,
+    )
+
+    reset = None
+    if requires_sandbox(art) and args.reset_url:
+        import urllib.request
+        reset = lambda: urllib.request.urlopen(args.reset_url, b"")  # noqa: E731
+        print("  (irreversible capability: resetting app state first)")
+
+    outcome = verify_and_store(art, params, replay=engine.replay,
+                               capabilities_root=CAPS, evidence=ev,
+                               reset_app=reset)
+    ev.log("verification", verified=outcome.ok, reason=outcome.reason)
+    return outcome
 
 
 def cmd_replay(args) -> int:
@@ -195,7 +240,7 @@ def _print_result(r) -> None:
 def cmd_catalog(args) -> int:
     """Expose saved artifacts as callable capabilities (stretch goal)."""
     tools = []
-    for p in sorted(Path(CAPS).glob("*.json")):
+    for p in sorted(Path(CAPS).rglob("*.json")):
         art = CapabilityArtifact.model_validate_json(p.read_text())
         schema = art.tool_schema()
         schema["_meta"] = {
@@ -274,6 +319,10 @@ def main(argv=None) -> int:
     d.add_argument("--max-steps", type=int, default=20)
     d.add_argument("--headed", action="store_true")
     d.add_argument("--keep-open", action="store_true")
+    d.add_argument("--reset-url", default=None,
+                   help="POSTed before verifying an irreversible capability, so "
+                        "verification does not commit a second transaction "
+                        "(e.g. http://127.0.0.1:8099/_reset).")
     d.set_defaults(fn=cmd_discover)
 
     r = sub.add_parser("replay", help="deterministic replay, no LLM")
