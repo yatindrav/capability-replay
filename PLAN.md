@@ -1,7 +1,12 @@
 # PLAN — closing the gap between DESIGN.md and the tree
 
-**Written:** 2026-08-27. **Basis:** the §-by-§ audit in this file's companion
-sections, run against the actual code, not against `HANDOFF.md`.
+**Written:** 2026-08-27. **Basis:** a §-by-§ audit run against the actual code,
+not against `HANDOFF.md`.
+
+> **Status: phases 0–4, 6 and 7 are done and committed. Phase 5 — the real
+> discovery run — is the only one left, and it is blocked solely on
+> `ANTHROPIC_API_KEY` not being set in this environment. It is one command,
+> given below.**
 
 `DESIGN.md` is roughly half implemented. §4 (replay) and most of §6 (safety) are
 built and verified; §5 (escalation) is built and has never been executed; §1–§3

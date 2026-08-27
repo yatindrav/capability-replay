@@ -72,40 +72,35 @@ one-time token makes a second post a no-op. Two business outcomes
 runs are not reproducible without it. Three new faults: `native_confirm`,
 `compliance_modal`, `post_error`.
 
-### Open gaps, in build order
+### The one thing left
 
-1. **Join 2 — escalation must be a pause, not a terminus.** `replay/engine.py`
-   returns `ReplayStatus.ESCALATED` terminally at four sites. Correct semantics:
-   a *resolved* escalation returns `SUCCESS`/`BUSINESS_OUTCOME` with an
-   `EscalationRecord` appended to `ReplayResult.escalations`. `ESCALATED` is
-   returned **only** when the request times out or is abandoned. See `DESIGN.md`
-   §10. The schema side (`EscalationRecord`) is already in `schema/result.py`.
+**A real LLM discovery run.** Non-negotiable per the brief, and the only gap
+still open. Everything it depends on is built: the agent has `select_option`,
+`wait_for` and `assert_state`, declares `risk` at decision time, and the
+recorder verifies a fresh artifact before storing it. Set `ANTHROPIC_API_KEY`
+and run:
 
-2. **Join 1 — verification replay after recording.** The recorder must replay a
-   freshly distilled artifact once (no model, same params) before writing it to
-   `capabilities/`. An artifact that fails its own verification goes to
-   `evidence/` with the failure detail attached, never to `capabilities/`. This
-   is what catches volatile checkpoints (a synthesized checkpoint containing a
-   timestamp fails on the very next run).
+```bash
+export SVC_OPERATOR_ID=demo SVC_PASSWORD=demo ANTHROPIC_API_KEY=...
+python mockapp/app.py &
+WITH_DISCOVERY=1 bash tools/demo.sh
+```
 
-3. **Join 3 — audit chain.** `discovery.py` writes `provenance.discovery_run_id`,
-   but `engine.py` never copies it onto `ReplayResult.discovery_run_id`. One
-   line, but it's what makes evidence walkable from a production result back to
-   the discovery that produced the capability.
+That records on member 12345 and replays on 23456, which is the demonstration
+`DESIGN.md` §10 requires. For the write capability, add `--reset-url
+http://127.0.0.1:8099/_reset` so its verification replay does not post a second
+transaction.
 
-4. **Detectors `dialog_present` and `load_failed` are declared but unimplemented.**
-   In the schema, absent from `engine.py` and `surface/web.py`. Also needed: the
-   adapter must register a Playwright dialog handler at session open — but **not**
-   for the reason previously written here. Measured against the mock app's
-   `native_confirm` fault: with no handler Playwright silently auto-*dismisses*
-   the dialog, so `onclick="return confirm(...)"` returns false, the form never
-   submits, and `click()` returns in 0.0s reporting success. It does not hang; it
-   posts nothing and says it worked. Registering the handler is what makes the
-   dialog observable at all, and is the only way `dialog_present` can ever fire.
+If the run gets stuck, read `evidence/disc_*/run.jsonl` — the tool call that
+failed and the reason are in there — rather than tightening the system prompt on
+a guess.
 
-   Related design rule: an **unmodeled** blocking dialog (role `dialog`/
-   `alertdialog` not present in the recorded observation) must **escalate**, not
-   fail. A novel modal in a bank app is exactly where a human should look.
+### Deliberately not built
+
+Listed with reasoning in `PLAN.md`: `ObservedControl` (the model reads a text
+tree, not an enumerated control list), typed `StepDraft` and backtrack pruning,
+per-step checkpoint synthesis from observation deltas, `field_rules`, screenshot
+blur, `read_table`. `DESIGN.md` §2 and §3 say where each diverges from the plan.
 
 ## Non-negotiables
 
