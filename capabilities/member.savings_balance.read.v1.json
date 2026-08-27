@@ -1,0 +1,321 @@
+{
+  "schema_version": "1.0.0",
+  "capability_id": "member.savings_balance.read",
+  "version": 1,
+  "title": "Read member savings balance",
+  "description": "Look up a credit-union member by member number and return their current savings balance from the account summary screen.",
+  "target": {
+    "app_id": "acme-servicing",
+    "app_version": null,
+    "variant": "base",
+    "surface": "legacy_web",
+    "entry_url_template": "http://127.0.0.1:8099/servicing/"
+  },
+  "inputs": [
+    {
+      "name": "member_id",
+      "type": "string",
+      "required": true,
+      "description": "Credit-union member number.",
+      "sensitivity": "pii",
+      "pattern": "^\\d+$",
+      "example": "12345"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "savings_balance",
+      "type": "number",
+      "description": "Current savings account balance in USD.",
+      "sensitivity": "pii",
+      "from_step": "s4"
+    }
+  ],
+  "steps": [
+    {
+      "id": "s1",
+      "intent": "Open the servicing frameset",
+      "action": {
+        "kind": "navigate",
+        "url_template": "http://127.0.0.1:8099/servicing/"
+      },
+      "target": null,
+      "risk": "safe_reversible",
+      "checkpoint": null,
+      "conditions": [],
+      "timeout_ms": 15000,
+      "optional": false
+    },
+    {
+      "id": "s2",
+      "intent": "Enter the member number into the search form",
+      "action": {
+        "kind": "type",
+        "value_template": "{member_id}",
+        "clear_first": true
+      },
+      "target": {
+        "role": "textbox",
+        "name": null,
+        "name_match": "exact",
+        "frame": {
+          "path": [
+            "detailFrame"
+          ]
+        },
+        "nth": null,
+        "near_text": "Member Number",
+        "within_section": null,
+        "fallbacks": [
+          {
+            "strategy": "text_anchor",
+            "value": "after=Member Number",
+            "confidence": 0.6,
+            "note": "Positional anchor relative to stable label text."
+          }
+        ],
+        "robustness_note": "Only textbox in the search frame; anchored to a vendor label."
+      },
+      "risk": "safe_reversible",
+      "checkpoint": null,
+      "conditions": [],
+      "timeout_ms": 15000,
+      "optional": false
+    },
+    {
+      "id": "s3",
+      "intent": "Submit the member search",
+      "action": {
+        "kind": "click"
+      },
+      "target": {
+        "role": "button",
+        "name": "Search",
+        "name_match": "exact",
+        "frame": {
+          "path": [
+            "detailFrame"
+          ]
+        },
+        "nth": null,
+        "near_text": null,
+        "within_section": null,
+        "fallbacks": [],
+        "robustness_note": "Vendor-fixed control label."
+      },
+      "risk": "safe_reversible",
+      "checkpoint": null,
+      "conditions": [],
+      "timeout_ms": 15000,
+      "optional": false
+    },
+    {
+      "id": "s4",
+      "intent": "Read the savings balance from the account summary table",
+      "action": {
+        "kind": "read",
+        "output_name": "savings_balance",
+        "transform": "strip_currency"
+      },
+      "target": {
+        "role": "cell",
+        "name": null,
+        "name_match": "exact",
+        "frame": {
+          "path": [
+            "detailFrame"
+          ]
+        },
+        "nth": null,
+        "near_text": null,
+        "within_section": "Account Summary",
+        "fallbacks": [
+          {
+            "strategy": "table_cell",
+            "value": "row=Savings;col=Current Balance",
+            "confidence": 0.85,
+            "note": "Row/column labels are vendor-fixed strings."
+          }
+        ],
+        "robustness_note": "Row/column label addressing survives re-branding."
+      },
+      "risk": "safe_reversible",
+      "checkpoint": {
+        "detectors": [
+          {
+            "kind": "text_present",
+            "value": "Account Summary",
+            "control": null,
+            "case_sensitive": false
+          }
+        ],
+        "require": "all",
+        "timeout_ms": 10000,
+        "description": "Goal state reached: 'Account Summary' is visible"
+      },
+      "conditions": [],
+      "timeout_ms": 15000,
+      "optional": false
+    }
+  ],
+  "success": {
+    "detectors": [
+      {
+        "kind": "text_present",
+        "value": "Account Summary",
+        "control": null,
+        "case_sensitive": false
+      }
+    ],
+    "require": "all",
+    "timeout_ms": 10000,
+    "description": "Goal state reached: 'Account Summary' is visible"
+  },
+  "global_conditions": [
+    {
+      "condition_id": "session_expired",
+      "detect": {
+        "kind": "text_present",
+        "value": "Your session has expired",
+        "control": null,
+        "case_sensitive": false
+      },
+      "disposition": "recoverable",
+      "outcome_code": null,
+      "message": "Session expired; re-establishing.",
+      "recovery": {
+        "kind": "reauthenticate",
+        "dismiss_control": null,
+        "max_attempts": 1,
+        "backoff_ms": 500
+      },
+      "scope": "global"
+    },
+    {
+      "condition_id": "maintenance_interstitial",
+      "detect": {
+        "kind": "text_present",
+        "value": "Scheduled maintenance",
+        "control": null,
+        "case_sensitive": false
+      },
+      "disposition": "recoverable",
+      "outcome_code": null,
+      "message": "Dismissing known maintenance interstitial.",
+      "recovery": {
+        "kind": "dismiss",
+        "dismiss_control": {
+          "role": "button",
+          "name": "Acknowledge",
+          "name_match": "exact",
+          "frame": {
+            "path": [
+              "detailFrame"
+            ]
+          },
+          "nth": null,
+          "near_text": null,
+          "within_section": null,
+          "fallbacks": [],
+          "robustness_note": null
+        },
+        "max_attempts": 2,
+        "backoff_ms": 300
+      },
+      "scope": "global"
+    },
+    {
+      "condition_id": "member_not_found",
+      "detect": {
+        "kind": "text_present",
+        "value": "No member found",
+        "control": null,
+        "case_sensitive": false
+      },
+      "disposition": "business_outcome",
+      "outcome_code": "MEMBER_NOT_FOUND",
+      "message": "No member exists with the supplied member number.",
+      "recovery": {
+        "kind": "none",
+        "dismiss_control": null,
+        "max_attempts": 2,
+        "backoff_ms": 1000
+      },
+      "scope": "global"
+    },
+    {
+      "condition_id": "invalid_member_number",
+      "detect": {
+        "kind": "text_present",
+        "value": "must be numeric",
+        "control": null,
+        "case_sensitive": false
+      },
+      "disposition": "business_outcome",
+      "outcome_code": "INVALID_MEMBER_NUMBER",
+      "message": "The application rejected the member number as non-numeric.",
+      "recovery": {
+        "kind": "none",
+        "dismiss_control": null,
+        "max_attempts": 2,
+        "backoff_ms": 1000
+      },
+      "scope": "global"
+    },
+    {
+      "condition_id": "permission_denied",
+      "detect": {
+        "kind": "text_present",
+        "value": "not authorized",
+        "control": null,
+        "case_sensitive": false
+      },
+      "disposition": "escalate",
+      "outcome_code": null,
+      "message": "Operator credentials lack permission for this screen.",
+      "recovery": {
+        "kind": "none",
+        "dismiss_control": null,
+        "max_attempts": 2,
+        "backoff_ms": 1000
+      },
+      "scope": "global"
+    },
+    {
+      "condition_id": "app_error",
+      "detect": {
+        "kind": "text_present",
+        "value": "SVC-500",
+        "control": null,
+        "case_sensitive": false
+      },
+      "disposition": "hard_failure",
+      "outcome_code": "APP_ERROR",
+      "message": "The application returned an internal error (SVC-500).",
+      "recovery": {
+        "kind": "none",
+        "dismiss_control": null,
+        "max_attempts": 2,
+        "backoff_ms": 1000
+      },
+      "scope": "global"
+    }
+  ],
+  "policy": {
+    "allowlist_id": "acme-servicing-readonly",
+    "max_risk_unattended": "safe_reversible"
+  },
+  "approval_state": "draft",
+  "stability": {
+    "replay_count": 0,
+    "success_count": 0,
+    "last_verified_at": null
+  },
+  "provenance": {
+    "discovered_by": "(seeded — replaced by a real discovery run)",
+    "discovery_run_id": "disc_seed",
+    "recorded_at": "2026-08-27T03:08:43.841714Z",
+    "recorded_by": null,
+    "transcript_ref": "evidence/disc_seed/run.jsonl"
+  }
+}

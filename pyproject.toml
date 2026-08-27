@@ -1,0 +1,28 @@
+[project]
+name = "cua-capability"
+version = "0.1.0"
+description = "Record-once / replay-many computer-use capability system for legacy back-office UIs"
+requires-python = ">=3.11"
+
+# Dependency licensing is a hard constraint: MIT / BSD / Apache-2.0 / PSF only.
+# The full transitive tree was audited — no GPL, LGPL, MPL, EPL, CDDL or AGPL.
+dependencies = [
+    "pydantic>=2.9,<3",       # MIT       — artifact schema, validation, JSON Schema emission
+    "playwright>=1.49,<2",    # Apache-2.0 — a11y snapshot, role-based resolution, dialog handling
+    "anthropic>=0.40",        # MIT       — discovery loop (tool use with strict input schemas)
+    "flask>=3.0,<4",          # BSD-3     — mock legacy target only, not shipped
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",            # MIT
+]
+
+[project.scripts]
+cua = "cua.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["cua*"]

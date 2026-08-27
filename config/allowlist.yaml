@@ -1,0 +1,22 @@
+# Allowlist configuration.
+#
+# Bound to an artifact by `policy.allowlist_id`. Deliberately route-level, not
+# host-level: "any page on this host" is almost never the intent, and the
+# fault-injection hook (/_fault) is intentionally absent so the automation
+# cannot reach its own test controls.
+
+allowlists:
+  acme-servicing-readonly:
+    url_patterns:
+      - "http://127.0.0.1:8099/servicing/*"
+      - "http://127.0.0.1:8099/servicing"
+    action_kinds: [navigate, click, type, select, read, wait, assert]
+    max_risk_unattended: safe_reversible
+
+  acme-servicing-write:
+    url_patterns:
+      - "http://127.0.0.1:8099/servicing/*"
+    action_kinds: [navigate, click, type, select, read, wait, assert]
+    # Write flows may modify records unattended, but anything irreversible
+    # (posting a transaction) still stops for a human.
+    max_risk_unattended: risky
