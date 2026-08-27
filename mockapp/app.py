@@ -96,6 +96,14 @@ def set_fault():
     return {"faults": list(FAULTS)}
 
 
+def reset_state() -> None:
+    """Restore the synthetic data. Importable so tests can call it directly."""
+    MEMBERS.clear()
+    MEMBERS.update(copy.deepcopy(PRISTINE))
+    PENDING.clear()
+    FAULTS.clear()
+
+
 @app.post("/_reset")
 def reset():
     """Test hook, like /_fault and equally off the allowlist.
@@ -103,10 +111,7 @@ def reset():
     The write flow moves money, so without a reset point the second evidence run
     starts from the first run's balances and nothing is reproducible.
     """
-    MEMBERS.clear()
-    MEMBERS.update(copy.deepcopy(PRISTINE))
-    PENDING.clear()
-    FAULTS.clear()
+    reset_state()
     return {"reset": sorted(MEMBERS)}
 
 
@@ -200,11 +205,17 @@ def nav():
 def search():
     if not logged_in():
         return timeout_page()
+    # Acknowledging clears it, the way a real once-per-session notice behaves.
+    # A permanently re-armed interstitial would not be a harder test, just an
+    # unwinnable one -- and it would hide whether dismissal actually works.
+    if request.args.get("ack"):
+        FAULTS.pop("interstitial", None)
     if fault("interstitial"):
         return page(
             '<div class="box"><div class="hdr">Notice</div>'
             '<div class="val">Scheduled maintenance this Sunday 02:00-04:00.</div>'
             '<div class="val"><form method="get" action="/servicing/search">'
+            '<input type="hidden" name="ack" value="1">'
             '<input type="submit" value="Acknowledge"></form></div></div>'
         )
     return page(

@@ -24,6 +24,9 @@ cua = "cua.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: drives a real browser against the live mock app",
+]
 
 [tool.setuptools.packages.find]
 include = ["cua*"]

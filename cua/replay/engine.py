@@ -302,8 +302,21 @@ class ReplayEngine:
                 handled = self._handle_conditions(art, step, rec, run_id, params)
                 if handled == "restart":
                     return "restart"
-                if handled is not None:
-                    return handled if isinstance(handled, ReplayResult) else None
+                if isinstance(handled, ReplayResult):
+                    return handled
+                if handled == "retry":
+                    # The condition was recovered in-band, so the control we
+                    # could not find should now exist: retry *this* step. Moving
+                    # on instead would skip it silently and leave the flow acting
+                    # on a form it never filled — the same shape of bug as
+                    # retrying a step after re-authentication, and with the same
+                    # consequence, a confident wrong answer.
+                    if attempt <= 3:
+                        continue
+                    return self._terminal_fail(
+                        art, run_id, step, "recovery",
+                        "recoverable condition to clear",
+                        "still firing after 3 attempts")
                 req = self.escalate(StuckReason.LOCATOR_EXHAUSTED, str(exc),
                                     run_id=run_id, capability_id=art.capability_id,
                                     step=step, params=redact_params(params, art.inputs))
