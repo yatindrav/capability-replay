@@ -116,36 +116,43 @@ def cmd_replay(args) -> int:
         gate.guard_navigation(page)
         adapter = WebSurfaceAdapter(page)
         bootstrap_session(page, art.target.entry_url_template or "", art.target.app_id)
-        engine = ReplayEngine(
-            adapter, gate, ev, lease, iq,
-            reauth=lambda: bootstrap_session(
-                page, art.target.entry_url_template or "", art.target.app_id),
-        )
 
-        result = engine.replay(art, params)
+        def hand_to_operator(req) -> bool:
+            """Block the paused run while a human works the live session.
 
-        # --- human-in-the-loop: the session stays open across the handoff ---
-        while result.status == ReplayStatus.ESCALATED and args.attended:
-            before = adapter.snapshot().tree
-            print(f"\n>>> ESCALATED: {result.message}")
-            print(f">>> intervention {result.escalation_id} "
-                  f"(context in {INTERVENTIONS}/{result.escalation_id}.json)")
+            Returning True means the lease is back with automation and the run
+            may continue. Unattended, we decline immediately: an escalation
+            nobody is there to answer is exactly what ESCALATED means.
+            """
+            if not args.attended:
+                return False
+            print(f"\n>>> ESCALATED: {req.detail}")
+            print(f">>> intervention {req.request_id} "
+                  f"(context in {INTERVENTIONS}/{req.request_id}.json)")
+            print(f">>> step {req.step_id or '(none)'}: {req.step_intent or ''}")
             print(">>> operate the SAME live browser session, then press Enter "
                   "to hand control back.")
             if args.auto_handback:
                 time.sleep(args.auto_handback)
             else:
                 input()
-
             lease.operator_take_control()
             lease.operator_hand_back(args.operator_note or "manual step completed")
-            summary = engine.resume_after_handoff(
-                _req_stub(result.escalation_id, iq), before)
-            print(">>> captured human actions:")
-            for line in summary:
-                print(f"      {line}")
+            return True
 
-            result = engine.replay(art, params, start_at=result.resume_from_step)
+        engine = ReplayEngine(
+            adapter, gate, ev, lease, iq,
+            reauth=lambda: bootstrap_session(
+                page, art.target.entry_url_template or "", art.target.app_id),
+            on_escalation=hand_to_operator,
+        )
+
+        result = engine.replay(art, params)
+        for esc in result.escalations:
+            if esc.human_action_summary:
+                print(">>> captured human actions:")
+                for line in esc.human_action_summary.split("; "):
+                    print(f"      {line}")
 
         b.close()
 
@@ -153,13 +160,6 @@ def cmd_replay(args) -> int:
     _print_result(result)
     return 0 if result.ok_for_caller else 1
 
-
-def _req_stub(request_id, iq):
-    from cua.escalation.lease import InterventionRequest
-    doc = iq.load(request_id)
-    r = InterventionRequest()
-    r.request_id = doc["request_id"]
-    return r
 
 
 def _print_result(r) -> None:

@@ -40,6 +40,7 @@ from cua.schema.artifact import (
 )
 from cua.schema.result import (
     DISPOSITION_TO_STATUS,
+    EscalationRecord,
     FailureDetail,
     ReplayResult,
     ReplayStatus,
@@ -60,6 +61,7 @@ class ReplayEngine:
         interventions: InterventionQueue | None = None,
         no_progress_limit: int = 3,
         reauth=None,
+        on_escalation=None,
     ):
         self.a = adapter
         self.gate = gate
@@ -68,7 +70,15 @@ class ReplayEngine:
         self.iq = interventions
         self.no_progress_limit = no_progress_limit
         self._reauth = reauth
+        # Called with the InterventionRequest when the run pauses. Returns True
+        # if a human resolved it. Blocking by design — the run is paused, and
+        # the browser context stays exactly as it was while the human works in
+        # it. Absent, every escalation is unresolved and the run stops.
+        self._on_escalation = on_escalation
         self._recent_digests: list[str] = []
+        self.escalations: list[EscalationRecord] = []
+        # Steps a human has authorised past the risk gate, this run.
+        self._authorised: set[str] = set()
 
     # --- detectors --------------------------------------------------------
 
@@ -159,6 +169,78 @@ class ReplayEngine:
                     human_action_summary=summary)
         return summary
 
+    def _pause_for_human(self, req: InterventionRequest, before_tree: str) -> bool:
+        """Hand the live session to a human and wait.
+
+        This is the whole of Join 2. An escalation is a *pause*: the browser
+        context is never closed or recreated, so the human works in the same
+        session — same cookies, same form state — and the run continues after
+        they hand back. `ReplayStatus.ESCALATED` is reserved for an escalation
+        nobody resolved, which is the honest meaning of the word: the run
+        stopped and a person still needs to deal with it.
+
+        Returns True when the run may continue.
+        """
+        t0 = time.time()
+        resolved = False
+        if self._on_escalation is not None:
+            try:
+                resolved = bool(self._on_escalation(req))
+            except Exception as exc:  # an operator surface failing is not our crash
+                self.ev.log("escalation_handler_error", request_id=req.request_id,
+                            error=f"{type(exc).__name__}: {exc}")
+
+        summary = None
+        if resolved:
+            # The lease must be back with automation before we touch anything.
+            self.lease.assert_automation()
+            summary = self.resume_after_handoff(req, before_tree)
+
+        self.escalations.append(EscalationRecord(
+            escalation_id=req.request_id,
+            step_id=req.step_id,
+            trigger=req.reason.value if hasattr(req.reason, "value") else str(req.reason),
+            reason=req.detail,
+            resolved=resolved,
+            human_action_summary="; ".join(summary) if summary else None,
+            held_lease_ms=int((time.time() - t0) * 1000),
+        ))
+        return resolved
+
+    def _after_human_fixed_it(self, art, run_id: str, step: Step,
+                              rec: StepRecord, attempt: int):
+        """DESIGN §5 hand-back: checkpoint passes → move on, fails → re-run.
+
+        Returns `"skip"` when the operator's work already satisfied this step,
+        `None` to retry it, or a terminal result. The checkpoint is the only
+        honest way to tell whether the human already did what the step was going
+        to do; asking them would put a second source of truth alongside the one
+        the artifact already declares.
+        """
+        if step.checkpoint and self._check(step.checkpoint):
+            rec.checkpoint_passed = True
+            self.ev.log("resumed_past_step", step_id=step.id,
+                        why="checkpoint satisfied by the operator's work")
+            return "skip"
+        if attempt > 3:
+            return self._terminal_fail(
+                art, run_id, step, "recovery",
+                "a surface the step could act on after handback",
+                "still blocked after 3 attempts")
+        return None
+
+    def _escalated_result(self, art, run_id: str, req: InterventionRequest,
+                          step: Step | None, message: str,
+                          failure: FailureDetail | None = None) -> ReplayResult:
+        return ReplayResult(
+            status=ReplayStatus.ESCALATED, capability_id=art.capability_id,
+            capability_version=art.version, run_id=run_id,
+            discovery_run_id=art.provenance.discovery_run_id,
+            escalation_id=req.request_id, message=message, failure=failure,
+            escalations=list(self.escalations),
+            resume_from_step=step.id if step else None,
+            started_at=datetime.now(timezone.utc))
+
     # --- the main path ----------------------------------------------------
 
     def replay(self, art: CapabilityArtifact, params: dict[str, Any],
@@ -248,6 +330,8 @@ class ReplayEngine:
         result = ReplayResult(
             status=ReplayStatus.SUCCESS, capability_id=art.capability_id,
             capability_version=art.version, run_id=run_id, outputs=outputs,
+            discovery_run_id=art.provenance.discovery_run_id,
+            escalations=list(self.escalations),
             steps=records, started_at=started, drift_signals=drift,
             duration_ms=int((time.time() - t0) * 1000), evidence_dir=str(self.ev.dir),
         )
@@ -277,17 +361,23 @@ class ReplayEngine:
                                            "policy", "action permitted by allowlist",
                                            verdict.reason)
 
-            if verdict.decision == Decision.REQUIRE_CONFIRMATION:
+            if (verdict.decision == Decision.REQUIRE_CONFIRMATION
+                    and step.id not in self._authorised):
+                before = self.a.snapshot().tree
                 req = self.escalate(StuckReason.RISK_GATE, verdict.reason,
                                     run_id=run_id, capability_id=art.capability_id,
                                     step=step, params=redact_params(params, art.inputs))
-                return ReplayResult(
-                    status=ReplayStatus.ESCALATED, capability_id=art.capability_id,
-                    capability_version=art.version, run_id=run_id,
-                    escalation_id=req.request_id, message=verdict.reason,
-                    resume_from_step=step.id,
-                    started_at=datetime.now(timezone.utc),
-                )
+                if not self._pause_for_human(req, before):
+                    return self._escalated_result(art, run_id, req, step,
+                                                  verdict.reason)
+                # A resolved risk-gate escalation *is* the confirmation the gate
+                # asked for: a human looked at this step and authorised it. The
+                # authorisation is scoped to this step in this run and does not
+                # widen the allowlist or survive into the next invocation.
+                self._authorised.add(step.id)
+                self.ev.log("risk_authorised", step_id=step.id,
+                            escalation_id=req.request_id)
+                continue
 
             # --- act ---
             try:
@@ -317,19 +407,21 @@ class ReplayEngine:
                         art, run_id, step, "recovery",
                         "recoverable condition to clear",
                         "still firing after 3 attempts")
+                before = self.a.snapshot().tree
                 req = self.escalate(StuckReason.LOCATOR_EXHAUSTED, str(exc),
                                     run_id=run_id, capability_id=art.capability_id,
                                     step=step, params=redact_params(params, art.inputs))
-                return ReplayResult(
-                    status=ReplayStatus.ESCALATED, capability_id=art.capability_id,
-                    capability_version=art.version, run_id=run_id,
-                    escalation_id=req.request_id, message=str(exc),
-                    failure=FailureDetail(step_id=step.id, stage="locate",
-                                          expected=str(step.target),
-                                          observed=str(exc)),
-                    resume_from_step=step.id,
-                    started_at=datetime.now(timezone.utc),
-                )
+                detail = FailureDetail(step_id=step.id, stage="locate",
+                                       expected=str(step.target), observed=str(exc))
+                if not self._pause_for_human(req, before):
+                    return self._escalated_result(art, run_id, req, step,
+                                                  str(exc), detail)
+                resumed = self._after_human_fixed_it(art, run_id, step, rec, attempt)
+                if resumed == "skip":
+                    return None
+                if resumed is not None:
+                    return resumed
+                continue
 
             if rec.fallback_depth > 0:
                 drift.append(f"{step.id}: resolved via fallback depth {rec.fallback_depth} "
@@ -343,17 +435,22 @@ class ReplayEngine:
             if (len(self._recent_digests) == self.no_progress_limit
                     and len(set(self._recent_digests)) == 1
                     and step.action.kind in ("click", "navigate")):
+                before = self.a.snapshot().tree
                 req = self.escalate(
                     StuckReason.NO_PROGRESS,
                     f"surface unchanged across {self.no_progress_limit} actions",
                     run_id=run_id, capability_id=art.capability_id, step=step,
                     params=redact_params(params, art.inputs))
-                return ReplayResult(
-                    status=ReplayStatus.ESCALATED, capability_id=art.capability_id,
-                    capability_version=art.version, run_id=run_id,
-                    escalation_id=req.request_id, message="no progress",
-                    resume_from_step=step.id,
-                    started_at=datetime.now(timezone.utc))
+                if not self._pause_for_human(req, before):
+                    return self._escalated_result(art, run_id, req, step,
+                                                  "no progress")
+                self._recent_digests.clear()
+                resumed = self._after_human_fixed_it(art, run_id, step, rec, attempt)
+                if resumed == "skip":
+                    return None
+                if resumed is not None:
+                    return resumed
+                continue
 
             # --- conditions, then checkpoint ---
             outcome = self._handle_conditions(art, step, rec, run_id, params)
@@ -414,15 +511,18 @@ class ReplayEngine:
                       f"'{risky[-1].id}' ({risky[-1].risk.value}); cannot safely "
                       f"replay the flow to recover")
             self.ev.log("restart_refused", step_id=step.id, reason=reason)
+            before = self.a.snapshot().tree
             req = self.escalate(StuckReason.CONDITION_ESCALATE, reason,
                                 run_id=run_id, capability_id=art.capability_id,
                                 step=step, params=redact_params(params, art.inputs))
-            return ReplayResult(
-                status=ReplayStatus.ESCALATED, capability_id=art.capability_id,
-                capability_version=art.version, run_id=run_id,
-                escalation_id=req.request_id, message=reason,
-                resume_from_step=step.id,
-                started_at=datetime.now(timezone.utc))
+            # The one escalation that stays terminal even when a human answers
+            # it. Everywhere else the human unblocks the surface and the run
+            # continues; here the run itself is the problem -- resuming means
+            # replaying a flow that already committed a write, and the operator
+            # cannot make that safe by looking at the screen. Their job is to
+            # reconcile the account, and this run's honest answer is ESCALATED.
+            self._pause_for_human(req, before)
+            return self._escalated_result(art, run_id, req, step, reason)
 
         if restarts >= self.MAX_RESTARTS:
             return self._terminal_fail(
@@ -462,20 +562,22 @@ class ReplayEngine:
                 return "restart" if h.recovery.kind == "reauthenticate" else "retry"
 
             if h.disposition == Disposition.ESCALATE:
+                before = self.a.snapshot().tree
                 req = self.escalate(StuckReason.CONDITION_ESCALATE, h.message,
                                     run_id=run_id, capability_id=art.capability_id,
                                     step=step, params=redact_params(params, art.inputs))
-                return ReplayResult(
-                    status=ReplayStatus.ESCALATED, capability_id=art.capability_id,
-                    capability_version=art.version, run_id=run_id,
-                    escalation_id=req.request_id, message=h.message,
-                    resume_from_step=step.id,
-                    started_at=datetime.now(timezone.utc))
+                if self._pause_for_human(req, before):
+                    # The human dealt with whatever the handler detected; treat
+                    # it as an in-band recovery and let the step run again.
+                    return "retry"
+                return self._escalated_result(art, run_id, req, step, h.message)
 
             status = DISPOSITION_TO_STATUS[h.disposition]
             return ReplayResult(
                 status=status, capability_id=art.capability_id,
                 capability_version=art.version, run_id=run_id,
+                discovery_run_id=art.provenance.discovery_run_id,
+                escalations=list(self.escalations),
                 outcome_code=h.outcome_code, message=h.message,
                 failure=(FailureDetail(step_id=step.id, stage="condition",
                                        expected="no fault condition",
@@ -563,6 +665,8 @@ class ReplayEngine:
         return ReplayResult(
             status=ReplayStatus.FAILED, capability_id=art.capability_id,
             capability_version=art.version, run_id=run_id,
+            discovery_run_id=art.provenance.discovery_run_id,
+            escalations=list(self.escalations),
             failure=FailureDetail(step_id=step.id, stage=stage, expected=expected,
                                   observed=observed,
                                   evidence_refs=[p for p in (shot, snap) if p]),
@@ -574,6 +678,8 @@ class ReplayEngine:
         return ReplayResult(
             status=ReplayStatus.FAILED, capability_id=art.capability_id,
             capability_version=art.version, run_id=run_id, failure=detail,
+            discovery_run_id=art.provenance.discovery_run_id,
+            escalations=list(self.escalations),
             steps=records, started_at=started, drift_signals=drift,
             duration_ms=int((time.time() - t0) * 1000), evidence_dir=str(self.ev.dir))
 
