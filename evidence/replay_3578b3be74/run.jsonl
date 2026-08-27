@@ -1,0 +1,5 @@
+{"seq": 1, "at": "2026-08-27T05:01:37.709353+00:00", "run_id": "replay_3578b3be74", "event": "replay_start", "capability_id": "member.savings_balance.read", "version": 1, "params": {"member_id": "[REDACTED:PII:...45]"}}
+{"seq": 2, "at": "2026-08-27T05:01:37.931193+00:00", "run_id": "replay_3578b3be74", "event": "condition_fired", "step_id": "s3", "condition": "session_expired", "disposition": "recoverable", "scope": "global", "message": "Session expired; re-establishing."}
+{"seq": 3, "at": "2026-08-27T05:01:37.931193+00:00", "run_id": "replay_3578b3be74", "event": "recovery_attempt", "condition": "session_expired", "kind": "reauthenticate"}
+{"seq": 4, "at": "2026-08-27T05:01:38.613802+00:00", "run_id": "replay_3578b3be74", "event": "condition_fired", "step_id": "s3", "condition": "member_not_found", "disposition": "business_outcome", "scope": "global", "message": "No member exists with the supplied member number."}
+{"seq": 5, "at": "2026-08-27T05:01:38.613802+00:00", "run_id": "replay_3578b3be74", "event": "replay_end", "status": "business_outcome", "outcome_code": "MEMBER_NOT_FOUND"}

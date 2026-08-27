@@ -1,0 +1,20 @@
+{
+  "request_id": "iv_737172af3f",
+  "run_id": "replay_6442994bcd",
+  "capability_id": "member.savings_balance.read",
+  "goal": "",
+  "step_id": "s2",
+  "step_intent": "Enter the member number into the search form",
+  "reason": "locator_exhausted",
+  "detail": "no strategy resolved to exactly one control (text_anchor: matched 2)",
+  "observed_url": "http://127.0.0.1:8099/servicing/",
+  "observed_tree": "### frame: (main)  url=http://127.0.0.1:8099/servicing/\n(frameset container)\n\n### frame: navFrame  url=http://127.0.0.1:8099/servicing/nav\n- text: Menu\n- table:\n  - rowgroup:\n    - row \"Member Search\":\n      - cell \"Member Search\":\n        - link \"Member Search\":\n          - /url: /servicing/search\n    - row \"Reports\":\n      - cell \"Reports\":\n        - link \"Reports\":\n          - /url: /servicing/reports\n\n### frame: detailFrame  url=http://127.0.0.1:8099/servicing/search\n- text: Member Search\n- table:\n  - rowgroup:\n    - row \"Member Number\":\n      - cell \"Member Number\"\n      - cell:\n        - textbox\n    - row \"Search\":\n      - cell \"Search\":\n        - button \"Search\"",
+  "params_redacted": {
+    "member_id": "[REDACTED:PII:...45]"
+  },
+  "screenshot_path": "evidence\\replay_6442994bcd\\escalation_locator_exhausted.png",
+  "created_at": "2026-08-27T04:57:45.831985+00:00",
+  "resolved": false,
+  "operator_note": "",
+  "human_action_summary": []
+}

@@ -247,15 +247,25 @@ class WebSurfaceAdapter:
         return target_row.first.locator("td").nth(col_index)
 
     def _text_anchor(self, frame: Frame, ref: ControlRef, spec: str) -> Locator | None:
-        """spec: 'after=<text>' — the n-th control of ref.role following some text."""
+        """spec: 'after=<text>' — the n-th control of ref.role following some text.
+
+        The xpath supplies *position only*; `ref.role` still decides what kind of
+        control we are looking for. Keeping those separate matters: a legacy
+        label cell is typically followed by both its input and the form's submit
+        button, so position alone is ambiguous by construction. It also keeps the
+        strategy honest about the portability claim — role is the semantic part
+        and survives a port to UIA/AX, the xpath is only "which side of the label".
+        """
         parts = dict(p.split("=", 1) for p in spec.split(";") if "=" in p)
         anchor = parts.get("after")
         if not anchor:
             return None
-        return frame.locator(
+        positional = frame.locator(
             f"xpath=//*[contains(normalize-space(.), {_xq(anchor)})]"
-            f"/following::*[self::input or self::a or self::button]"
+            f"/following::*[self::input or self::a or self::button"
+            f" or self::select or self::textarea]"
         )
+        return frame.get_by_role(ref.role, include_hidden=False).and_(positional)  # type: ignore[arg-type]
 
     # --- action -----------------------------------------------------------
 
@@ -288,7 +298,14 @@ class WebSurfaceAdapter:
         needle = text if case_sensitive else text.lower()
         for fr in self._frames():
             try:
-                body = fr.locator("body").inner_text(timeout=2000) or ""
+                # A frameset document has no <body>; its text lives in the child
+                # frames, which this same loop visits. Asking for one anyway costs
+                # the full locator timeout on every call — and this runs once per
+                # global condition per step, so it dominated replay wall-clock
+                # (~2s x 6 conditions x 4 steps) before the guard.
+                if fr.locator("frameset").count() > 0:
+                    continue
+                body = fr.locator("body").inner_text(timeout=1000) or ""
             except Exception:
                 continue
             hay = body if case_sensitive else body.lower()

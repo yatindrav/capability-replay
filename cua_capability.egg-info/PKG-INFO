@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: cua-capability
+Version: 0.1.0
+Summary: Record-once / replay-many computer-use capability system for legacy back-office UIs
+Requires-Python: >=3.11
+Requires-Dist: pydantic<3,>=2.9
+Requires-Dist: playwright<2,>=1.49
+Requires-Dist: anthropic>=0.40
+Requires-Dist: flask<4,>=3.0
+Requires-Dist: pyyaml<7,>=6.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"

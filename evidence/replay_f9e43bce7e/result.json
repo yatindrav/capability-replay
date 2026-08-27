@@ -1,0 +1,66 @@
+{
+  "status": "success",
+  "capability_id": "member.savings_balance.read",
+  "capability_version": 1,
+  "run_id": "replay_f9e43bce7e",
+  "outputs": {
+    "savings_balance": 4812.55
+  },
+  "outcome_code": null,
+  "message": null,
+  "failure": null,
+  "escalation_id": null,
+  "escalations": [],
+  "discovery_run_id": null,
+  "resume_from_step": null,
+  "steps": [
+    {
+      "step_id": "s1",
+      "intent": "Open the servicing frameset",
+      "action_kind": "navigate",
+      "resolved_by": "url",
+      "fallback_depth": 0,
+      "checkpoint_passed": null,
+      "conditions_fired": [],
+      "duration_ms": 94,
+      "attempts": 1
+    },
+    {
+      "step_id": "s2",
+      "intent": "Enter the member number into the search form",
+      "action_kind": "type",
+      "resolved_by": "text_anchor",
+      "fallback_depth": 0,
+      "checkpoint_passed": null,
+      "conditions_fired": [],
+      "duration_ms": 43,
+      "attempts": 1
+    },
+    {
+      "step_id": "s3",
+      "intent": "Submit the member search",
+      "action_kind": "click",
+      "resolved_by": "role_name",
+      "fallback_depth": 0,
+      "checkpoint_passed": null,
+      "conditions_fired": [],
+      "duration_ms": 116,
+      "attempts": 1
+    },
+    {
+      "step_id": "s4",
+      "intent": "Read the savings balance from the account summary table",
+      "action_kind": "read",
+      "resolved_by": "table_cell",
+      "fallback_depth": 0,
+      "checkpoint_passed": true,
+      "conditions_fired": [],
+      "duration_ms": 44,
+      "attempts": 1
+    }
+  ],
+  "started_at": "2026-08-27T05:00:51.042199Z",
+  "duration_ms": 299,
+  "evidence_dir": "evidence\\replay_f9e43bce7e",
+  "drift_signals": []
+}

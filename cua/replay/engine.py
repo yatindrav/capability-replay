@@ -35,6 +35,7 @@ from cua.schema.artifact import (
     ControlRef,
     Detector,
     Disposition,
+    RiskClass,
     Step,
 )
 from cua.schema.result import (
@@ -183,21 +184,48 @@ class ReplayEngine:
                                             expected="parameters matching declared specs",
                                             observed=str(exc)))
 
-        started_yet = start_at is None
-        for step in art.steps:
-            if not started_yet:
-                if step.id != start_at:
-                    continue
-                started_yet = True
-                self.ev.log("resuming", step_id=step.id)
+        start_index = 0
+        if start_at is not None:
+            ids = [s.id for s in art.steps]
+            if start_at not in ids:
+                return self._fail(art, run_id, started, t0, records, drift,
+                                  FailureDetail(step_id=start_at, stage="resume",
+                                                expected="a step id present in the artifact",
+                                                observed=f"no step '{start_at}'"))
+            start_index = ids.index(start_at)
+            self.ev.log("resuming", step_id=start_at)
+
+        restarts = 0
+        i = start_index
+        while i < len(art.steps):
+            step = art.steps[i]
 
             rec = StepRecord(step_id=step.id, intent=step.intent,
                              action_kind=step.action.kind)
             s0 = time.time()
 
+            # Streamed, not just recorded: result.json is never written if the
+            # run dies mid-step, and that is precisely the run worth debugging.
+            # `intent` rides along so the log answers "why", not only "what".
+            self.ev.log("step_start", step_id=step.id, intent=step.intent,
+                        action_kind=step.action.kind, risk=step.risk.value)
+
             terminal = self._run_step(art, step, params, rec, outputs, drift, run_id)
             rec.duration_ms = int((time.time() - s0) * 1000)
             records.append(rec)
+
+            self.ev.log("step_end", step_id=step.id, resolved_by=rec.resolved_by,
+                        fallback_depth=rec.fallback_depth, attempts=rec.attempts,
+                        checkpoint_passed=rec.checkpoint_passed,
+                        duration_ms=rec.duration_ms)
+
+            if terminal == "restart":
+                terminal = self._restart(art, run_id, step, i, start_index,
+                                         restarts, params, outputs)
+                if terminal is None:
+                    restarts += 1
+                    i = start_index
+                    continue
 
             if terminal is not None:
                 terminal.steps = records
@@ -207,6 +235,8 @@ class ReplayEngine:
                 self.ev.log("replay_end", status=terminal.status.value,
                             outcome_code=terminal.outcome_code)
                 return terminal
+
+            i += 1
 
         # Overall success condition
         if not self._check(art.success):
@@ -270,6 +300,8 @@ class ReplayEngine:
                 # condition explains it — a validation error or a not-found
                 # screen legitimately removes the control we were looking for.
                 handled = self._handle_conditions(art, step, rec, run_id, params)
+                if handled == "restart":
+                    return "restart"
                 if handled is not None:
                     return handled if isinstance(handled, ReplayResult) else None
                 req = self.escalate(StuckReason.LOCATOR_EXHAUSTED, str(exc),
@@ -314,6 +346,8 @@ class ReplayEngine:
             outcome = self._handle_conditions(art, step, rec, run_id, params)
             if isinstance(outcome, ReplayResult):
                 return outcome
+            if outcome == "restart":
+                return "restart"
             if outcome == "retry":
                 if attempt <= 3:
                     continue
@@ -329,10 +363,65 @@ class ReplayEngine:
                     late = self._handle_conditions(art, step, rec, run_id, params)
                     if isinstance(late, ReplayResult):
                         return late
+                    if late == "restart":
+                        return "restart"
                     return self._terminal_fail(art, run_id, step, "checkpoint",
                                                step.checkpoint.description,
                                                self._observe_brief())
             return None
+
+    MAX_RESTARTS = 1
+
+    def _restart(self, art, run_id: str, step: Step, i: int, start_index: int,
+                 restarts: int, params, outputs: dict) -> ReplayResult | None:
+        """Decide whether a re-authenticated run may start over.
+
+        Returns None to authorise the restart, or a terminal result explaining
+        why not. Two things can forbid it.
+
+        The first is risk. Restarting replays every step from the entry point,
+        which is free for reads and unacceptable for writes: if the session
+        dropped *after* a transaction posted, re-running the flow posts it
+        twice, and if it dropped before, the caller still cannot tell. Neither
+        automation nor the artifact can distinguish those cases from outside the
+        app, so a session drop downstream of a non-reversible step is exactly
+        the case the escalation path exists for — a human reads the account and
+        decides. This is why `RiskClass` is recorded per step at discovery time
+        rather than inferred here: the decision has to be auditable before the
+        capability is ever approved.
+
+        The second is repetition. One restart absorbs a genuine session
+        expiry; a second means re-auth is not actually fixing anything, and
+        looping would hammer the login route.
+        """
+        executed = art.steps[start_index:i + 1]
+        risky = [s for s in executed if s.risk != RiskClass.SAFE_REVERSIBLE]
+        if risky:
+            reason = (f"session dropped after non-reversible step "
+                      f"'{risky[-1].id}' ({risky[-1].risk.value}); cannot safely "
+                      f"replay the flow to recover")
+            self.ev.log("restart_refused", step_id=step.id, reason=reason)
+            req = self.escalate(StuckReason.CONDITION_ESCALATE, reason,
+                                run_id=run_id, capability_id=art.capability_id,
+                                step=step, params=redact_params(params, art.inputs))
+            return ReplayResult(
+                status=ReplayStatus.ESCALATED, capability_id=art.capability_id,
+                capability_version=art.version, run_id=run_id,
+                escalation_id=req.request_id, message=reason,
+                resume_from_step=step.id,
+                started_at=datetime.now(timezone.utc))
+
+        if restarts >= self.MAX_RESTARTS:
+            return self._terminal_fail(
+                art, run_id, step, "recovery",
+                "an authenticated session for the duration of the flow",
+                f"session dropped again after {restarts} re-authentication(s)")
+
+        # The old surface is gone, so anything read from it is stale.
+        self.ev.log("restarting", step_id=step.id, after_restarts=restarts)
+        outputs.clear()
+        self._recent_digests.clear()
+        return None
 
     def _handle_conditions(self, art, step, rec, run_id, params):
         """Global handlers first: a session timeout invalidates any step-level
@@ -348,7 +437,16 @@ class ReplayEngine:
 
             if h.disposition == Disposition.RECOVERABLE:
                 self._recover(h)
-                return "retry"
+                # Re-authentication rebuilds the session from the entry point, so
+                # everything typed into the old one is gone. Retrying only the
+                # failed step would then act on a surface that no longer holds
+                # the flow's inputs — and that is how a session drop becomes a
+                # *wrong answer* instead of an error: the search box comes back
+                # empty, the search returns "no member found", and the caller is
+                # handed a confident, legitimate-looking business outcome for a
+                # member that exists. A reauth therefore restarts the flow.
+                # Every other recovery kind is in-band and retries in place.
+                return "restart" if h.recovery.kind == "reauthenticate" else "retry"
 
             if h.disposition == Disposition.ESCALATE:
                 req = self.escalate(StuckReason.CONDITION_ESCALATE, h.message,

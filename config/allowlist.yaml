@@ -5,17 +5,29 @@
 # fault-injection hook (/_fault) is intentionally absent so the automation
 # cannot reach its own test controls.
 
+#
+# `auth_url_patterns` is a separate list on purpose. Session bootstrap is
+# platform behaviour, not agent behaviour: the browser is driven to the sign-in
+# route by `surface/session.bootstrap_session`, so the navigation guard has to
+# permit it — but a recorded `navigate` action must never be able to aim the
+# agent at the credential form. `PolicyGate.check()` consults `url_patterns`
+# only, so these routes are reachable by the platform and not by the agent.
+
 allowlists:
   acme-servicing-readonly:
     url_patterns:
       - "http://127.0.0.1:8099/servicing/*"
       - "http://127.0.0.1:8099/servicing"
+    auth_url_patterns:
+      - "http://127.0.0.1:8099/login"
     action_kinds: [navigate, click, type, select, read, wait, assert]
     max_risk_unattended: safe_reversible
 
   acme-servicing-write:
     url_patterns:
       - "http://127.0.0.1:8099/servicing/*"
+    auth_url_patterns:
+      - "http://127.0.0.1:8099/login"
     action_kinds: [navigate, click, type, select, read, wait, assert]
     # Write flows may modify records unattended, but anything irreversible
     # (posting a transaction) still stops for a human.

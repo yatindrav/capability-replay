@@ -11,6 +11,7 @@ dependencies = [
     "playwright>=1.49,<2",    # Apache-2.0 — a11y snapshot, role-based resolution, dialog handling
     "anthropic>=0.40",        # MIT       — discovery loop (tool use with strict input schemas)
     "flask>=3.0,<4",          # BSD-3     — mock legacy target only, not shipped
+    "pyyaml>=6.0,<7",         # MIT       — allowlist config parsing (imported by safety/policy.py)
 ]
 
 [project.optional-dependencies]
@@ -19,7 +20,7 @@ dev = [
 ]
 
 [project.scripts]
-cua = "cua.cli:main"
+cua = "cua.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

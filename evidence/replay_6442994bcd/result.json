@@ -1,0 +1,48 @@
+{
+  "status": "escalated",
+  "capability_id": "member.savings_balance.read",
+  "capability_version": 1,
+  "run_id": "replay_6442994bcd",
+  "outputs": {},
+  "outcome_code": null,
+  "message": "no strategy resolved to exactly one control (text_anchor: matched 2)",
+  "failure": {
+    "step_id": "s2",
+    "stage": "locate",
+    "expected": "role='textbox' name=None name_match='exact' frame=FrameRef(path=['detailFrame']) nth=None near_text='Member Number' within_section=None fallbacks=[LocatorHint(strategy=<LocatorStrategy.TEXT_ANCHOR: 'text_anchor'>, value='after=Member Number', confidence=0.6, note='Positional anchor relative to stable label text.')] robustness_note='Only textbox in the search frame; anchored to a vendor label.'",
+    "observed": "no strategy resolved to exactly one control (text_anchor: matched 2)",
+    "evidence_refs": []
+  },
+  "escalation_id": "iv_737172af3f",
+  "escalations": [],
+  "discovery_run_id": null,
+  "resume_from_step": "s2",
+  "steps": [
+    {
+      "step_id": "s1",
+      "intent": "Open the servicing frameset",
+      "action_kind": "navigate",
+      "resolved_by": "url",
+      "fallback_depth": 0,
+      "checkpoint_passed": null,
+      "conditions_fired": [],
+      "duration_ms": 12114,
+      "attempts": 1
+    },
+    {
+      "step_id": "s2",
+      "intent": "Enter the member number into the search form",
+      "action_kind": "type",
+      "resolved_by": null,
+      "fallback_depth": 0,
+      "checkpoint_passed": null,
+      "conditions_fired": [],
+      "duration_ms": 12111,
+      "attempts": 1
+    }
+  ],
+  "started_at": "2026-08-27T04:57:45.831985Z",
+  "duration_ms": 24225,
+  "evidence_dir": "evidence\\replay_6442994bcd",
+  "drift_signals": []
+}

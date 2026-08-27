@@ -12,7 +12,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 from urllib.parse import urlparse
@@ -50,6 +50,7 @@ class Allowlist:
     url_patterns: list[str]
     action_kinds: list[str]
     max_risk_unattended: RiskClass = RiskClass.SAFE_REVERSIBLE
+    auth_url_patterns: list[str] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: str, allowlist_id: str) -> "Allowlist":
@@ -63,16 +64,35 @@ class Allowlist:
             max_risk_unattended=RiskClass(
                 entry.get("max_risk_unattended", "safe_reversible")
             ),
+            auth_url_patterns=entry.get("auth_url_patterns", []),
         )
 
-    def url_permitted(self, url: str) -> bool:
+    @staticmethod
+    def _matches(url: str, patterns: list[str]) -> bool:
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https"):
             return False
         # Match against scheme://host/path so a pattern can pin the route, not
         # just the host — "any page on this domain" is rarely what we mean.
         canonical = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-        return any(fnmatch.fnmatch(canonical, pat) for pat in self.url_patterns)
+        return any(fnmatch.fnmatch(canonical, pat) for pat in patterns)
+
+    def url_permitted(self, url: str) -> bool:
+        """Routes the *agent* may target. Deliberately excludes auth routes."""
+        return self._matches(url, self.url_patterns)
+
+    def auth_permitted(self, url: str) -> bool:
+        """Routes the *platform* may drive the browser to during bootstrap.
+
+        Split from `url_patterns` rather than merged into it, because the two
+        answer different questions. The sign-in POST is browser-initiated by
+        `surface/session.bootstrap_session`, so `guard_navigation` must let it
+        through or the session can never be established — but no recorded
+        `navigate` action should be able to aim the agent at the credential
+        form. `check()` therefore never consults this list: the browser may be
+        *taken* to the auth route by the platform, the agent may not go there.
+        """
+        return self._matches(url, self.auth_url_patterns)
 
 
 class PolicyViolation(Exception):
@@ -121,7 +141,10 @@ class PolicyGate:
         """
 
         def handler(route, req):
-            if req.resource_type == "document" and not self.allowlist.url_permitted(req.url):
+            if req.resource_type == "document" and not (
+                self.allowlist.url_permitted(req.url)
+                or self.allowlist.auth_permitted(req.url)
+            ):
                 self.violations.append(f"blocked navigation to '{req.url}'")
                 route.abort()
             else:
