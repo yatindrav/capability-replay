@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
 
 from anthropic import Anthropic
+from pydantic import BaseModel, Field
 
 from cua.evidence import EvidenceRecorder
 from cua.escalation.lease import InterventionQueue, SessionLease, StuckReason
@@ -34,6 +36,7 @@ from cua.schema.artifact import (
     FrameRef,
     LocatorHint,
     LocatorStrategy,
+    AssertAction,
     NavigateAction,
     OutputSpec,
     ParamSpec,
@@ -42,11 +45,13 @@ from cua.schema.artifact import (
     ReadAction,
     RecoveryAction,
     RiskClass,
+    SelectAction,
     Sensitivity,
     Step,
     SurfaceKind,
     TargetBinding,
     TypeAction,
+    WaitAction,
 )
 from cua.surface.web import WebSurfaceAdapter
 
@@ -67,11 +72,37 @@ Rules that matter:
 - For every action, give a short `intent` (why this step exists) and a \
   `robustness_note` (why this targeting will still work next month for a \
   differently-branded install of the same vendor product).
+- Classify every state-changing action with `risk`. This is not paperwork: \
+  anything above safe_reversible stops for a human before it runs unattended, \
+  so under-classifying a step that moves money removes the only check on it. \
+  Judge the consequence of the action, not the wording of the button.
+- Use `assert_state` after any action whose success must be proven before you \
+  continue -- it becomes a checkpoint in the recording, which is what stops a \
+  replay from acting on a screen it never actually reached. Use `wait_for` \
+  rather than assuming a slow page has settled.
 - Take ONE action per turn. Observe the result before deciding the next one.
 - When the goal is met, call `finish` with the extracted data.
 - If you cannot proceed, call `stuck` with a reason. Do not guess.
 
 You are being recorded. Every action you take becomes a replayable step."""
+
+# Asked of every tool that can change application state. Declared by the model at
+# decision time rather than inferred from the artifact afterward, which is the
+# point: it makes the model reason about consequence *while* it chooses, and it
+# puts a reviewable justification in the artifact for every step. Inferring risk
+# after the fact -- from a button's label, say -- gets "Post" right and "Continue"
+# wrong, and offers a reviewer nothing to disagree with.
+RISK_FIELD = {
+    "type": "string",
+    "enum": ["safe_reversible", "risky", "irreversible"],
+    "description": (
+        "Consequence of this action. safe_reversible: reading, searching, "
+        "navigating. risky: writes that could be undone. irreversible: commits a "
+        "transaction, moves money, sends or deletes something. If in doubt, "
+        "choose the more severe class -- an over-classified step asks a human, an "
+        "under-classified one does not."
+    ),
+}
 
 TOOLS = [
     {
@@ -82,8 +113,10 @@ TOOLS = [
             "properties": {
                 "url": {"type": "string"},
                 "intent": {"type": "string"},
+                # Legacy apps commit state on GET more often than they should.
+                "risk": RISK_FIELD,
             },
-            "required": ["url", "intent"],
+            "required": ["url", "intent", "risk"],
         },
     },
     {
@@ -98,8 +131,9 @@ TOOLS = [
                 "near_text": {"type": "string", "description": "Anchor text if name is absent."},
                 "intent": {"type": "string"},
                 "robustness_note": {"type": "string"},
+                "risk": RISK_FIELD,
             },
-            "required": ["role", "intent", "robustness_note"],
+            "required": ["role", "intent", "robustness_note", "risk"],
         },
     },
     {
@@ -115,8 +149,9 @@ TOOLS = [
                 "text": {"type": "string"},
                 "intent": {"type": "string"},
                 "robustness_note": {"type": "string"},
+                "risk": RISK_FIELD,
             },
-            "required": ["role", "text", "intent", "robustness_note"],
+            "required": ["role", "text", "intent", "robustness_note", "risk"],
         },
     },
     {
@@ -136,6 +171,55 @@ TOOLS = [
                 "robustness_note": {"type": "string"},
             },
             "required": ["output_name", "role", "intent", "robustness_note"],
+        },
+    },
+    {
+        "name": "select_option",
+        "description": "Choose an option in a dropdown (a combobox / select control).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "role": {"type": "string", "description": "Usually 'combobox'."},
+                "name": {"type": "string"},
+                "frame": {"type": "string"},
+                "near_text": {"type": "string", "description": "Anchor text if name is absent."},
+                "value": {"type": "string", "description": "The option value to select."},
+                "intent": {"type": "string"},
+                "robustness_note": {"type": "string"},
+                "risk": RISK_FIELD,
+            },
+            "required": ["role", "value", "intent", "robustness_note", "risk"],
+        },
+    },
+    {
+        "name": "wait_for",
+        "description": (
+            "Wait until some text appears on screen. Use instead of guessing that a "
+            "slow page has finished; never assume an action landed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "intent": {"type": "string"},
+            },
+            "required": ["text", "intent"],
+        },
+    },
+    {
+        "name": "assert_state",
+        "description": (
+            "Assert that some text is on screen right now, recording it as a "
+            "checkpoint in the capability. Use after an action whose success must "
+            "be proven before continuing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "intent": {"type": "string"},
+            },
+            "required": ["text", "intent"],
         },
     },
     {
@@ -165,6 +249,50 @@ TOOLS = [
 ]
 
 
+class DiscoveryRequest(BaseModel):
+    """What a discovery run is asked to do (DESIGN §1).
+
+    Parameters are declared here rather than inferred from the transcript
+    afterwards. Inference is guessy — `12345` could be a member number, a branch
+    code or an account suffix, and guessing wrong silently produces a capability
+    that hardcodes one member's data. Declaring up front means templating is
+    exact substitution, and the input half of the capability contract is correct
+    by construction.
+    """
+
+    goal: str = Field(description="May carry {placeholders} naming the params.")
+    params: dict[str, str] = Field(default_factory=dict)
+    param_specs: list[ParamSpec] = Field(default_factory=list)
+    entry_url: str
+    app_id: str
+    allowlist_id: str
+    max_steps: int = 20
+    model: str = DEFAULT_MODEL
+
+    def validate_params(self) -> None:
+        """Fail before the browser opens, not half-way through a form."""
+        for spec in self.param_specs:
+            value = self.params.get(spec.name)
+            if value is None:
+                if spec.required:
+                    raise ValueError(f"missing required parameter '{spec.name}'")
+                continue
+            if spec.pattern and not re.fullmatch(spec.pattern, value):
+                raise ValueError(
+                    f"parameter '{spec.name}' does not match {spec.pattern!r}")
+        declared = {s.name for s in self.param_specs}
+        for name in self.params:
+            if name not in declared:
+                raise ValueError(f"parameter '{name}' has no declared ParamSpec")
+
+    def resolved_goal(self) -> str:
+        """The goal with placeholders substituted, which is what the model sees."""
+        goal = self.goal
+        for name, value in self.params.items():
+            goal = goal.replace("{" + name + "}", value)
+        return goal
+
+
 class DiscoveryAgent:
     def __init__(self, adapter: WebSurfaceAdapter, gate: PolicyGate,
                  evidence: EvidenceRecorder, lease: SessionLease,
@@ -179,6 +307,12 @@ class DiscoveryAgent:
         self.max_steps = max_steps
         self.client = Anthropic()
         self.recorded: list[dict[str, Any]] = []
+        # Two strikes. One denial may be the model reaching for a plausible
+        # action it is simply not permitted to take, and telling it so is enough.
+        # Repeated denials mean it is trying to do something this capability is
+        # not allowed to do at all, which is an escalation, not a retry.
+        self.denials = 0
+        self.max_denials = 2
 
     # ------------------------------------------------------------------
 
@@ -234,6 +368,13 @@ class DiscoveryAgent:
                 result_text = f"ERROR: {type(exc).__name__}: {exc}"
                 self.ev.log("action_error", step=step_no, error=str(exc))
 
+            if self.denials > self.max_denials:
+                return self._escalate(
+                    goal,
+                    f"{self.denials} policy denials; the model is reaching for "
+                    f"authority this capability does not have",
+                    StuckReason.RISK_GATE)
+
             obs = self.a.snapshot()
             digests.append(obs.digest())
             if len(digests) >= 3 and len(set(digests[-3:])) == 1:
@@ -259,24 +400,75 @@ class DiscoveryAgent:
         # model has no need for raw PII to decide where to click.
         return f"CURRENT URL: {obs.url}\n\nACCESSIBILITY SNAPSHOT:\n{redact_text(obs.tree)}"
 
+    TOOL_TO_ACTION_KIND = {
+        "navigate": "navigate", "click": "click", "type_text": "type",
+        "read_value": "read", "select_option": "select",
+        "wait_for": "wait", "assert_state": "assert",
+    }
+
+    def _declared_risk(self, call) -> RiskClass:
+        """The model's own classification, defaulting to the safe end.
+
+        `read_value`, `wait_for` and `assert_state` do not carry a risk field
+        because they cannot change state — they only observe. Everything that
+        can must declare, and the schema makes it required.
+        """
+        raw = call.input.get("risk")
+        if raw is None:
+            return RiskClass.SAFE_REVERSIBLE
+        try:
+            return RiskClass(raw)
+        except ValueError:
+            self.ev.log("risk_unparsed", tool=call.name, declared=raw)
+            return RiskClass.IRREVERSIBLE  # unparseable means ask a human
+
     def _execute(self, call, parameters: dict[str, str]) -> str:
-        kind = {"navigate": "navigate", "click": "click",
-                "type_text": "type", "read_value": "read"}[call.name]
+        kind = self.TOOL_TO_ACTION_KIND[call.name]
         inp = call.input
+        risk = self._declared_risk(call)
+
+        # Cross-check the declaration against the old label heuristic. We trust
+        # the model's answer -- it is the one that lands in the artifact and gets
+        # reviewed -- but a disagreement is worth surfacing, because it is either
+        # a mis-declaration or a control whose label is misleading.
+        if call.name == "click":
+            guessed = _classify_click(inp.get("name", ""))
+            if guessed != risk:
+                self.ev.log("risk_disagreement", tool=call.name,
+                            control=inp.get("name"), declared=risk.value,
+                            heuristic=guessed.value)
 
         self.lease.assert_automation()
-        verdict = self.gate.check(kind, RiskClass.SAFE_REVERSIBLE,
+        verdict = self.gate.check(kind, risk,
                                   inp.get("url") if kind == "navigate" else None)
         if verdict.decision != Decision.ALLOW:
-            self.ev.log("policy_denied", tool=call.name, reason=verdict.reason)
+            self.ev.log("policy_denied", tool=call.name, reason=verdict.reason,
+                        decision=verdict.decision.value, risk=risk.value)
+            self.denials += 1
             return f"BLOCKED BY POLICY: {verdict.reason}"
 
-        ref = self._control_ref(inp) if kind != "navigate" else None
+        needs_control = kind in ("click", "type", "read", "select")
+        ref = self._control_ref(inp) if needs_control else None
 
         if kind == "navigate":
             self.a.navigate(inp["url"])
-            self._record(call.name, inp, None)
+            self._record(call.name, inp, None, risk)
             return f"Navigated to {inp['url']}"
+
+        if kind == "wait":
+            ok = self._await_text(inp["text"])
+            self._record(call.name, inp, None, risk)
+            return (f"'{inp['text']}' is present." if ok
+                    else f"TIMED OUT waiting for '{inp['text']}'.")
+
+        if kind == "assert":
+            if not self.a.contains_text(inp["text"]):
+                # Not recorded: an assertion that does not hold is not a
+                # checkpoint, it is the model being wrong about where it is.
+                return (f"ASSERTION FAILED: '{inp['text']}' is not on screen. "
+                        f"You are not where you think you are.")
+            self._record(call.name, inp, None, risk)
+            return f"Confirmed: '{inp['text']}' is on screen."
 
         res = self.a.resolve(ref)
         if not res.ok:
@@ -284,21 +476,35 @@ class DiscoveryAgent:
 
         if kind == "click":
             self.a.click(res)
-            self._record(call.name, inp, ref)
+            self._record(call.name, inp, ref, risk)
             time.sleep(0.4)
             return "Clicked."
 
         if kind == "type":
             self.a.type_text(res, inp["text"], True)
-            self._record(call.name, inp, ref)
+            self._record(call.name, inp, ref, risk)
             return f"Typed into the {inp['role']}."
+
+        if kind == "select":
+            self.a.select(res, inp["value"])
+            self._record(call.name, inp, ref, risk)
+            return f"Selected '{inp['value']}'."
 
         if kind == "read":
             value = self.a.read(res)
-            self._record(call.name, inp, ref)
+            self._record(call.name, inp, ref, risk)
             return f"Read value: {redact_text(value)}"
 
         return "unknown action"
+
+    def _await_text(self, text: str, timeout_s: float = 10.0) -> bool:
+        """Poll, never sleep — the same discipline the replay engine uses."""
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if self.a.contains_text(text):
+                return True
+            time.sleep(0.25)
+        return self.a.contains_text(text)
 
     def _control_ref(self, inp: dict) -> ControlRef:
         fallbacks = []
@@ -325,9 +531,11 @@ class DiscoveryAgent:
             robustness_note=inp.get("robustness_note"),
         )
 
-    def _record(self, tool: str, inp: dict, ref: ControlRef | None) -> None:
+    def _record(self, tool: str, inp: dict, ref: ControlRef | None,
+                risk: RiskClass = RiskClass.SAFE_REVERSIBLE) -> None:
         self.recorded.append({"tool": tool, "input": inp,
-                              "control": ref.model_dump() if ref else None})
+                              "control": ref.model_dump() if ref else None,
+                              "risk": risk.value})
 
     def _escalate(self, goal: str, reason: str, kind: StuckReason) -> dict[str, Any]:
         from cua.escalation.lease import InterventionRequest
@@ -391,24 +599,31 @@ def build_artifact(
         ctrl = ControlRef(**rec["control"]) if rec["control"] else None
         intent = inp.get("intent", "")
 
+        # The model declared this at decision time; we carry it through rather
+        # than re-deriving it, so what a reviewer approves is what the model
+        # actually reasoned about. Older recordings without the field fall back
+        # to the safe end.
+        risk = RiskClass(rec.get("risk", RiskClass.SAFE_REVERSIBLE.value))
+
         if tool == "navigate":
             action = NavigateAction(url_template=canonical(inp["url"]))
-            risk = RiskClass.SAFE_REVERSIBLE
         elif tool == "click":
             action = ClickAction()
-            # A click that submits a search is reversible; a click that commits
-            # a record is not. We classify conservatively by name and let a
-            # human reviewer correct it before approval.
-            risk = _classify_click(inp.get("name", ""))
         elif tool == "type_text":
             action = TypeAction(value_template=canonical(inp["text"]))
-            risk = RiskClass.SAFE_REVERSIBLE
+        elif tool == "select_option":
+            action = SelectAction(value_template=canonical(inp["value"]))
+        elif tool == "wait_for":
+            action = WaitAction(until=Detector(kind="text_present",
+                                               value=canonical(inp["text"])))
+        elif tool == "assert_state":
+            action = AssertAction(detector=Detector(kind="text_present",
+                                                    value=canonical(inp["text"])))
         elif tool == "read_value":
             action = ReadAction(
                 output_name=inp["output_name"],
                 transform="strip_currency" if "balance" in inp["output_name"] else "trim",
             )
-            risk = RiskClass.SAFE_REVERSIBLE
             outputs.append(OutputSpec(
                 name=inp["output_name"],
                 type="number" if "balance" in inp["output_name"] else "string",

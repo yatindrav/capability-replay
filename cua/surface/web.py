@@ -265,7 +265,17 @@ class WebSurfaceAdapter:
             f"/following::*[self::input or self::a or self::button"
             f" or self::select or self::textarea]"
         )
-        return frame.get_by_role(ref.role, include_hidden=False).and_(positional)  # type: ignore[arg-type]
+        matching = frame.get_by_role(ref.role, include_hidden=False).and_(positional)  # type: ignore[arg-type]
+
+        # Nearest-following, not all-following. Elsewhere a strategy matching
+        # more than one control is a failure, because two controls answering to
+        # the same *identity* means we cannot tell which was recorded. This
+        # strategy addresses by *position* instead — "the control after this
+        # label" — and every later control on the form also follows that label,
+        # so a multi-match is expected rather than ambiguous. On the sub-account
+        # form the "Fund From" select follows the "Account Type" label as surely
+        # as its own does. Document order makes the nearest one first.
+        return matching.nth(ref.nth if ref.nth is not None else 0)
 
     # --- action -----------------------------------------------------------
 
