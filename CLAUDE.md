@@ -26,6 +26,7 @@ time, it does not go in the artifact.
 | `DESIGN.md` | Build spec. Six-stage pipeline, component interfaces, §10 end-to-end thread. **Source of truth for _how_.** |
 | `REQUIREMENTS.md` | Traceability matrix — every requirement bullet → component, with status. Update it when you build something. |
 | `REPORT.md` | The submitted write-up (their seven mandated headings). Source of truth for _why_. |
+| `PLAN.md` | Phased implementation plan for the remaining work, with the ordering constraints that force it. **Start here for what to build next.** |
 
 ## Current state — READ THIS
 
