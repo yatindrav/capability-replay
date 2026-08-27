@@ -149,7 +149,7 @@ def cmd_replay(args) -> int:
               f"unattended; pass --allow-draft to override")
         return 3
 
-    run_id = new_run_id("replay")
+    run_id = args.run_id or new_run_id("replay")
     ev = EvidenceRecorder(EVIDENCE, run_id)
     allow = Allowlist.load(args.allowlist_config, art.policy.allowlist_id)
     gate = PolicyGate(allow, attended=args.attended)
@@ -335,6 +335,10 @@ def main(argv=None) -> int:
                    help="seconds to wait instead of prompting (for scripted demos)")
     r.add_argument("--operator-note", default="")
     r.add_argument("--allow-draft", action="store_true")
+    r.add_argument("--run-id", default=None,
+                   help="Name this run's evidence directory instead of "
+                        "generating one. Used by the demo so the evidence set "
+                        "reads as a set.")
     r.add_argument("--headed", action="store_true")
     r.set_defaults(fn=cmd_replay)
 

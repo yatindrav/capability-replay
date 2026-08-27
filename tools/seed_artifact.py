@@ -1,11 +1,22 @@
 """
-Seed a capability artifact without calling the model.
+Seed capability artifacts without calling the model.
 
 This exists so replay, error handling and escalation can be exercised and tested
-without an API key. It feeds a recorded-shape transcript through the *same*
+without an API key. It feeds recorded-shape transcripts through the *same*
 `build_artifact()` the discovery agent uses — it does not hand-write the
-artifact. Running `python -m cua discover` produces the real thing and
-overwrites this file.
+artifacts. Running `python -m cua discover` produces the real thing and
+supersedes these.
+
+Two capabilities, because they exercise different halves of the system:
+
+- `member.savings_balance.read` — a read. Returns a typed output, and is the
+  one whose replay is expected to run green end to end.
+- `member.subaccount.open` — a write whose last step is `IRREVERSIBLE`. Its
+  replay is *expected to escalate*: the risk gate stops it, which is the whole
+  point. Nothing is posted unless a human authorises it.
+
+Provenance says `(seeded)` on both. They were not discovered by a model and the
+artifact should not claim otherwise.
 """
 
 from __future__ import annotations
@@ -14,6 +25,7 @@ import json
 from pathlib import Path
 
 from cua.agent.discovery import build_artifact
+from cua.agent.recorder import capability_path
 from cua.schema.artifact import ParamSpec, Sensitivity
 
 ENTRY = "http://127.0.0.1:8099/servicing/"
@@ -101,6 +113,81 @@ TRANSCRIPT = {
 }
 
 
+SUBACCOUNT = {
+    "ok": True,
+    # Two parameters, because the amount is as much a per-invocation input as
+    # the member is. Baking "250.00" into the artifact would make the capability
+    # "open a $250 sub-account", which is not a capability anyone would call
+    # twice -- and it would hide a whole class of business outcome, since the
+    # deposit is what triggers INSUFFICIENT_FUNDS and DEPOSIT_BELOW_MINIMUM.
+    "parameters": {"member_id": "12345", "opening_deposit": "250.00"},
+    "success_text": "Sub-Account Opened",
+    "summary": ("Open a new sub-account for a credit-union member, funded by a "
+                "transfer from one of their existing accounts, and post it."),
+    "recorded": [
+        {"tool": "navigate", "risk": "safe_reversible", "control": None,
+         "input": {"url": ENTRY.rstrip("/") + "/subaccount?mid=12345",
+                   "intent": "Open the sub-account form for this member"}},
+        {"tool": "select_option", "risk": "safe_reversible",
+         "control": {"role": "combobox", "near_text": "Account Type",
+                     "robustness_note": "Anchored to the vendor's field label.",
+                     "fallbacks": [{"strategy": "text_anchor",
+                                    "value": "after=Account Type",
+                                    "confidence": 0.6,
+                                    "note": "Nearest combobox after the label."}]},
+         "input": {"role": "combobox", "value": "Savings",
+                   "near_text": "Account Type",
+                   "robustness_note": "Anchored to the vendor's field label.",
+                   "intent": "Choose the type of sub-account to open"}},
+        {"tool": "type_text", "risk": "safe_reversible",
+         "control": {"role": "textbox", "near_text": "Nickname",
+                     "robustness_note": "Anchored to the vendor's field label.",
+                     "fallbacks": [{"strategy": "text_anchor",
+                                    "value": "after=Nickname", "confidence": 0.6,
+                                    "note": "Nearest textbox after the label."}]},
+         "input": {"role": "textbox", "text": "Vacation Fund",
+                   "near_text": "Nickname",
+                   "robustness_note": "Anchored to the vendor's field label.",
+                   "intent": "Name the new sub-account"}},
+        {"tool": "type_text", "risk": "safe_reversible",
+         "control": {"role": "textbox", "near_text": "Opening Deposit",
+                     "robustness_note": "Anchored to the vendor's field label.",
+                     "fallbacks": [{"strategy": "text_anchor",
+                                    "value": "after=Opening Deposit",
+                                    "confidence": 0.6,
+                                    "note": "Nearest textbox after the label."}]},
+         "input": {"role": "textbox", "text": "250.00",
+                   "near_text": "Opening Deposit",
+                   "robustness_note": "Anchored to the vendor's field label.",
+                   "intent": "Set the opening deposit"}},
+        {"tool": "click", "risk": "safe_reversible",
+         "control": {"role": "button", "name": "Continue",
+                     "robustness_note": "Vendor-fixed control label."},
+         "input": {"role": "button", "name": "Continue",
+                   "robustness_note": "Vendor-fixed control label.",
+                   "intent": "Submit the form for server-side validation"}},
+        {"tool": "assert_state", "risk": "safe_reversible", "control": None,
+         "input": {"text": "Review and Post",
+                   "intent": "Prove we reached the last reversible screen "
+                             "before committing anything"}},
+        {"tool": "click", "risk": "irreversible",
+         "control": {"role": "button", "name": "Post",
+                     "robustness_note": "Vendor-fixed control label."},
+         "input": {"role": "button", "name": "Post",
+                   "robustness_note": "Vendor-fixed control label.",
+                   "intent": "Post the transaction: debits the source account "
+                             "and opens the new sub-account"}},
+    ],
+}
+
+
+def _write(art) -> None:
+    out = capability_path("capabilities", art)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(art.model_dump_json(indent=2))
+    print(f"wrote {out}")
+
+
 def main() -> None:
     art = build_artifact(
         capability_id="member.savings_balance.read",
@@ -122,10 +209,39 @@ def main() -> None:
             "savings_balance": "Current savings account balance in USD.",
         },
     )
-    out = Path("capabilities") / f"{art.capability_id}.v{art.version}.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(art.model_dump_json(indent=2))
-    print(f"wrote {out}")
+    _write(art)
+
+    write_cap = build_artifact(
+        capability_id="member.subaccount.open",
+        title="Open a funded sub-account",
+        description=SUBACCOUNT["summary"],
+        goal="open a new sub-account for member 12345 and reach the confirmation screen",
+        entry_url=ENTRY,
+        app_id="acme-servicing",
+        # The write allowlist permits risky steps unattended; the irreversible
+        # post still exceeds its ceiling and stops for a human.
+        allowlist_id="acme-servicing-write",
+        discovery=SUBACCOUNT,
+        model="(seeded — replaced by a real discovery run)",
+        run_id="disc_seed_write",
+        param_specs=[
+            ParamSpec(
+                name="member_id", type="string", required=True,
+                description="Credit-union member number.",
+                sensitivity=Sensitivity.PII, pattern=r"^\d+$", example="12345",
+            ),
+            ParamSpec(
+                name="opening_deposit", type="string", required=True,
+                description=("Opening deposit in dollars, debited from the "
+                             "member's first listed account. Minimum $25.00."),
+                pattern=r"^\d{1,3}(,\d{3})*(\.\d{2})?$|^\d+(\.\d{2})?$",
+                example="100.00",
+            ),
+        ],
+    )
+    _write(write_cap)
+
+    print()
     print(json.dumps(art.tool_schema(), indent=2))
 
 

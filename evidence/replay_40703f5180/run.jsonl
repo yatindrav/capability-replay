@@ -1,5 +1,0 @@
-{"seq": 1, "at": "2026-08-27T05:04:26.355089+00:00", "run_id": "replay_40703f5180", "event": "replay_start", "capability_id": "member.savings_balance.read", "version": 1, "params": {"member_id": "[REDACTED:PII:...45]"}}
-{"seq": 2, "at": "2026-08-27T05:04:26.599522+00:00", "run_id": "replay_40703f5180", "event": "condition_fired", "step_id": "s3", "condition": "session_expired", "disposition": "recoverable", "scope": "global", "message": "Session expired; re-establishing."}
-{"seq": 3, "at": "2026-08-27T05:04:26.599522+00:00", "run_id": "replay_40703f5180", "event": "recovery_attempt", "condition": "session_expired", "kind": "reauthenticate"}
-{"seq": 4, "at": "2026-08-27T05:04:27.199626+00:00", "run_id": "replay_40703f5180", "event": "restarting", "step_id": "s3", "after_restarts": 0}
-{"seq": 5, "at": "2026-08-27T05:04:27.419288+00:00", "run_id": "replay_40703f5180", "event": "replay_end", "status": "success", "outputs": {"savings_balance": "[REDACTED:PII:...55]"}}

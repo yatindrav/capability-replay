@@ -1,3 +1,0 @@
-{"seq": 1, "at": "2026-08-27T05:01:01.925420+00:00", "run_id": "replay_1b4236a399", "event": "replay_start", "capability_id": "member.savings_balance.read", "version": 1, "params": {"member_id": "[REDACTED:PII:...99]"}}
-{"seq": 2, "at": "2026-08-27T05:01:02.141198+00:00", "run_id": "replay_1b4236a399", "event": "condition_fired", "step_id": "s3", "condition": "member_not_found", "disposition": "business_outcome", "scope": "global", "message": "No member exists with the supplied member number."}
-{"seq": 3, "at": "2026-08-27T05:01:02.142198+00:00", "run_id": "replay_1b4236a399", "event": "replay_end", "status": "business_outcome", "outcome_code": "MEMBER_NOT_FOUND"}

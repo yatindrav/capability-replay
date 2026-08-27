@@ -1,17 +1,15 @@
 {
-  "status": "success",
+  "status": "business_outcome",
   "capability_id": "member.savings_balance.read",
   "capability_version": 1,
-  "run_id": "replay_d9257c605a",
-  "outputs": {
-    "savings_balance": 4812.55
-  },
-  "outcome_code": null,
-  "message": null,
+  "run_id": "rep_read_not_found",
+  "outputs": {},
+  "outcome_code": "MEMBER_NOT_FOUND",
+  "message": "No member exists with the supplied member number.",
   "failure": null,
   "escalation_id": null,
   "escalations": [],
-  "discovery_run_id": null,
+  "discovery_run_id": "disc_seed",
   "resume_from_step": null,
   "steps": [
     {
@@ -22,7 +20,7 @@
       "fallback_depth": 0,
       "checkpoint_passed": null,
       "conditions_fired": [],
-      "duration_ms": 90,
+      "duration_ms": 98,
       "attempts": 1
     },
     {
@@ -33,7 +31,7 @@
       "fallback_depth": 0,
       "checkpoint_passed": null,
       "conditions_fired": [],
-      "duration_ms": 49,
+      "duration_ms": 51,
       "attempts": 1
     },
     {
@@ -43,24 +41,15 @@
       "resolved_by": "role_name",
       "fallback_depth": 0,
       "checkpoint_passed": null,
-      "conditions_fired": [],
-      "duration_ms": 93,
-      "attempts": 1
-    },
-    {
-      "step_id": "s4",
-      "intent": "Read the savings balance from the account summary table",
-      "action_kind": "read",
-      "resolved_by": "table_cell",
-      "fallback_depth": 0,
-      "checkpoint_passed": true,
-      "conditions_fired": [],
-      "duration_ms": 36,
+      "conditions_fired": [
+        "member_not_found"
+      ],
+      "duration_ms": 79,
       "attempts": 1
     }
   ],
-  "started_at": "2026-08-27T05:05:20.252642Z",
-  "duration_ms": 269,
-  "evidence_dir": "evidence\\replay_d9257c605a",
+  "started_at": "2026-08-27T16:56:26.243207Z",
+  "duration_ms": 232,
+  "evidence_dir": "evidence\\rep_read_not_found",
   "drift_signals": []
 }

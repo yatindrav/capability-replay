@@ -1,2 +1,0 @@
-{"seq": 1, "at": "2026-08-27T05:01:00.792915+00:00", "run_id": "replay_b0dcaa1f32", "event": "replay_start", "capability_id": "member.savings_balance.read", "version": 1, "params": {"member_id": "[REDACTED:PII:...56]"}}
-{"seq": 2, "at": "2026-08-27T05:01:01.069231+00:00", "run_id": "replay_b0dcaa1f32", "event": "replay_end", "status": "success", "outputs": {"savings_balance": "[REDACTED:PII:...09]"}}

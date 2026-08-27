@@ -1,0 +1,107 @@
+{
+  "status": "escalated",
+  "capability_id": "member.subaccount.open",
+  "capability_version": 1,
+  "run_id": "rep_write_escalated",
+  "outputs": {},
+  "outcome_code": null,
+  "message": "risk 'irreversible' exceeds unattended ceiling 'risky'",
+  "failure": null,
+  "escalation_id": "iv_24f5be1bce",
+  "escalations": [
+    {
+      "escalation_id": "iv_24f5be1bce",
+      "step_id": "s7",
+      "trigger": "risk_gate",
+      "reason": "risk 'irreversible' exceeds unattended ceiling 'risky'",
+      "resolved": false,
+      "human_action_summary": null,
+      "held_lease_ms": 0
+    }
+  ],
+  "discovery_run_id": "disc_seed_write",
+  "resume_from_step": "s7",
+  "steps": [
+    {
+      "step_id": "s1",
+      "intent": "Open the sub-account form for this member",
+      "action_kind": "navigate",
+      "resolved_by": "url",
+      "fallback_depth": 0,
+      "checkpoint_passed": null,
+      "conditions_fired": [],
+      "duration_ms": 47,
+      "attempts": 1
+    },
+    {
+      "step_id": "s2",
+      "intent": "Choose the type of sub-account to open",
+      "action_kind": "select",
+      "resolved_by": "text_anchor",
+      "fallback_depth": 0,
+      "checkpoint_passed": null,
+      "conditions_fired": [],
+      "duration_ms": 23,
+      "attempts": 1
+    },
+    {
+      "step_id": "s3",
+      "intent": "Name the new sub-account",
+      "action_kind": "type",
+      "resolved_by": "text_anchor",
+      "fallback_depth": 0,
+      "checkpoint_passed": null,
+      "conditions_fired": [],
+      "duration_ms": 24,
+      "attempts": 1
+    },
+    {
+      "step_id": "s4",
+      "intent": "Set the opening deposit",
+      "action_kind": "type",
+      "resolved_by": "text_anchor",
+      "fallback_depth": 0,
+      "checkpoint_passed": null,
+      "conditions_fired": [],
+      "duration_ms": 25,
+      "attempts": 1
+    },
+    {
+      "step_id": "s5",
+      "intent": "Submit the form for server-side validation",
+      "action_kind": "click",
+      "resolved_by": "role_name",
+      "fallback_depth": 0,
+      "checkpoint_passed": null,
+      "conditions_fired": [],
+      "duration_ms": 81,
+      "attempts": 1
+    },
+    {
+      "step_id": "s6",
+      "intent": "Prove we reached the last reversible screen before committing anything",
+      "action_kind": "assert",
+      "resolved_by": null,
+      "fallback_depth": 0,
+      "checkpoint_passed": null,
+      "conditions_fired": [],
+      "duration_ms": 18,
+      "attempts": 1
+    },
+    {
+      "step_id": "s7",
+      "intent": "Post the transaction: debits the source account and opens the new sub-account",
+      "action_kind": "click",
+      "resolved_by": null,
+      "fallback_depth": 0,
+      "checkpoint_passed": null,
+      "conditions_fired": [],
+      "duration_ms": 40,
+      "attempts": 1
+    }
+  ],
+  "started_at": "2026-08-27T16:56:27.374524Z",
+  "duration_ms": 265,
+  "evidence_dir": "evidence\\rep_write_escalated",
+  "drift_signals": []
+}

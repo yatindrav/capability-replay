@@ -1,6 +1,8 @@
 # DESIGN — Computer-Use Capability System
 
-**Status:** design complete, pre-implementation.
+**Status:** implemented. Replay, safety, escalation and recording run against
+the mock app and are covered by tests; the sections below note where the build
+diverged from the plan and why. `PLAN.md` tracks what is deliberately not built.
 **Relationship to `REPORT.md`:** `REPORT.md` is the submitted write-up, organized
 around the evaluation headings. This document is the build specification —
 organized around the six capabilities the system must have, with the component
@@ -114,16 +116,40 @@ class Observation(BaseModel):
 model says "click the control with role=button, name='Search'", that maps 1:1
 into the artifact. No translation layer, no lossy re-derivation.
 
-**Redaction happens before the model sees it.** Values in fields marked PII by
-the allowlist's field rules are masked in `text_content` and in the observed
-control values. The model does not need a member's SSN to decide where to click.
+**As built, this is not what shipped.** `Observation` carries the flattened
+accessibility tree as text (`tree`, `url`, `frames`, `digest()`), and the model
+reads controls out of it rather than being handed an enumerated
+`list[ObservedControl]`. The 1:1 claim above is therefore weaker in practice
+than on paper: the model names a role and an accessible name in its tool call,
+and `_control_ref()` builds the `ControlRef` from those arguments. Since the
+tool schema asks for exactly the fields `ControlRef` holds, nothing is inferred
+— but the model is parsing a text blob to fill them, and a mis-parse is possible
+where an enumerated list would have made it impossible. Building `ObservedControl`
+properly is the single highest-value item left; it is listed in `PLAN.md` under
+work deliberately off the critical path.
+
+**Redaction happens before the model sees it.** `_observe_block()` runs
+`redact_text()` over the accessibility tree on the way to the model, and over any
+value a `read` returns. The model does not need a member's SSN to decide where to
+click.
+
+**As built:** redaction is pattern-based (SSN, card, email shapes) plus
+`Sensitivity` labels on declared params and outputs. The `field_rules` block
+sketched in §6 — matching controls by name to assign sensitivity — was not built,
+so sensitivity on an artifact's inputs and outputs is author-supplied rather than
+inherited from the allowlist. The consequence is narrow but real: a PII field
+this system has never been told about, and whose value matches no pattern, is
+redacted in neither the log nor the model's view.
 
 ### Decision: constrained tool-calling, not free-form output
 
 The model is given exactly the action vocabulary from the artifact schema as
-function-calling tools — `navigate`, `click`, `type`, `select`, `read`, `wait`,
-`assert`, plus two control tools: `goal_reached(evidence)` and
-`stuck(reason)`. It cannot emit anything else.
+function-calling tools — in the code: `navigate`, `click`, `type_text`,
+`select_option`, `read_value`, `wait_for`, `assert_state`, plus two control
+tools, `finish(success_text, summary)` and `stuck(reason)`. It cannot emit
+anything else, and each maps to exactly one `Action` the replay engine already
+executes. That is the check that keeps the two paths symmetric: a tool the model
+can call but replay cannot express would break recording by construction.
 
 Each action tool requires the model to supply, alongside the action:
 - `intent` — why, in plain language (carried into the artifact for reviewers)
@@ -135,6 +161,13 @@ Requiring `robustness_note` and `risk` at decision time, rather than deriving
 them afterward, is deliberate: it makes the model reason about durability and
 danger *while* it chooses, and it puts a reviewable justification in the artifact
 for every step.
+
+`risk` is required on every state-changing tool and is passed straight to
+`PolicyGate.check()`, so the gate constrains discovery exactly as it constrains
+replay. The label-matching heuristic that predated this (`_classify_click`)
+survives only as a cross-check: when the model's declaration and the heuristic
+disagree, the run logs `risk_disagreement`, which is either a mis-declaration or
+a control whose label lies. Both are worth a reviewer's attention.
 
 ### Stopping conditions
 
@@ -179,6 +212,17 @@ class StepDraft(BaseModel):
 
 This is what "decoupled from the raw model transcript" means concretely: the
 transcript is evidence, the drafts are the record.
+
+**As built:** the decoupling is real — `DiscoveryAgent._record()` appends at the
+moment each action is *accepted and executed*, and `build_artifact()` reads only
+those records, never the message history. But the record is a plain dict of
+`{tool, input, control, risk}`, not the typed `StepDraft` above, and it omits
+`succeeded`, `observation_before/after` and `superseded`. Two consequences,
+both honest to state: an action that failed is not recorded at all rather than
+recorded-and-pruned, and backtrack pruning (distillation step 1) does not
+happen, because nothing carries the before/after hashes it would need. On flows
+this short the model rarely backtracks, so the artifacts are clean in practice
+— but that is luck holding, not a mechanism.
 
 ### Distillation pass (deterministic, no model call)
 
@@ -377,37 +421,62 @@ useless for exactly the write flows that carry the business value.
 
 ## 7. Module layout
 
+This is the tree as built. It is flatter than the layout this section originally
+sketched, and deliberately so: several of the modules planned here turned out to
+be one function each, and splitting a file per noun makes a reviewer open six
+files to follow one decision.
+
 ```
 cua/
   schema/
-    artifact.py     CapabilityArtifact, Step, ControlRef, ConditionHandler   [DONE]
-    result.py       ReplayResult, StepRecord, FailureDetail                  [DONE]
-    session.py      Session, Lease, InterventionRequest
+    artifact.py     CapabilityArtifact, Step, ControlRef, ConditionHandler
+    result.py       ReplayResult, StepRecord, FailureDetail, EscalationRecord
   surface/
-    base.py         SurfaceAdapter interface, Observation, ObservedControl
-    web.py          Playwright adapter — a11y snapshot, resolution, actions
+    web.py          Playwright adapter — a11y snapshot, resolution, actions,
+                    dialog capture. SurfaceAdapter Protocol + Observation live
+                    here too; a desktop adapter is a sibling file, not a
+                    schema change
+    session.py      session bootstrap. Auth is NOT part of an artifact [§1]
   agent/
-    loop.py         discovery loop, stopping conditions
-    tools.py        action vocabulary as function-calling tools
-    recorder.py     StepDraft capture + distillation pass
+    discovery.py    the LLM loop, its tool vocabulary, and the distillation
+                    pass that turns accepted tool calls into a capability
+    recorder.py     verification replay + storage [§10 Join 1]
   replay/
-    engine.py       step execution, condition evaluation, result assembly
-    resolver.py     ranked locator resolution
-    detectors.py    Detector evaluation
+    engine.py       step execution, detector evaluation, condition handling,
+                    escalation, result assembly
   safety/
-    gate.py         PolicyGate
-    allowlist.py    allowlist load/match
-    redact.py       PII masking, screenshot blur
+    policy.py       allowlist, PolicyGate, redaction
   escalation/
-    lease.py        lease state machine
-    console.py      mock operator HTTP surface
-  evidence/
-    writer.py       structured log, screenshots, snapshots
-  cli.py            discover | replay | serve-console | catalog
-mockapp/            legacy-style Flask target with injectable faults
-capabilities/       stored artifacts
-evidence/           run outputs
+    lease.py        lease state machine, InterventionRequest, queue
+  evidence.py       per-run structured log, screenshots, snapshots
+  __main__.py       discover | replay | catalog | operator
+mockapp/app.py      legacy-style Flask target with injectable faults
+tools/              seed_artifact.py, demo.sh
+tests/              units + browser-driven integration
+capabilities/<app_id>/<capability_id>/v<N>.json
+evidence/<run_id>/
 ```
+
+Four consolidations are worth naming, since each was a plan that did not survive
+contact:
+
+- **`resolver.py` + `detectors.py` → `engine.py` and `web.py`.** Detector
+  evaluation is a dozen lines over the adapter's interface, and ranked
+  resolution is meaningless away from the adapter that executes it. Separating
+  them would have created two files whose only content was a call.
+- **`gate.py` + `allowlist.py` + `redact.py` → `policy.py`.** These are one
+  policy, and the whole argument of §6 is that there is exactly one chokepoint.
+  Three files would have implied three.
+- **`loop.py` + `tools.py` → `discovery.py`.** The tool schemas *are* the
+  action vocabulary; keeping them beside the loop that dispatches them is what
+  makes it checkable that the model gets no richer powers than replay has.
+- **`cli.py` → `__main__.py`.** So `python -m cua` works without an install
+  step. (`pyproject.toml`'s console script pointed at `cua.cli:main`, which
+  never existed — fixed.)
+
+`schema/session.py` and `surface/base.py` were never needed: `Session` collapsed
+into the lease plus the Playwright context, and the `SurfaceAdapter` Protocol is
+eight lines that belong next to its only implementation until there is a second.
 
 ---
 
@@ -448,9 +517,17 @@ LLM-driven run against a live surface.
 
 1. **No-progress threshold.** 3 unchanged snapshots is a guess. It must not fight
    the checkpoint timeout on a slow legacy page — tune once the mock app exists.
-2. **Checkpoint synthesis quality.** Deriving checkpoints from observation deltas
-   may produce ones that are too specific (a timestamp that changes every run).
-   Likely needs a volatility filter; deferred until we see real deltas.
+   **Not yet tuned against a slow page.** It has not misfired, but the mock app
+   answers in milliseconds, so that is not evidence. The `slow` fault (a 6s
+   sleep) is the thing to test it against.
+2. **Checkpoint synthesis quality.** ~~Deferred until we see real deltas.~~
+   **Settled by §10 Join 1.** The verification replay makes this self-detecting:
+   an artifact whose checkpoint captured the sub-account receipt's posting
+   timestamp fails its own verification and never reaches `capabilities/`. A
+   volatility filter exists in `agent/recorder.py`, but only as a *reporting*
+   aid that names the offending string — the replay is the verdict. Filtering on
+   suspicion alone would silently drop legitimate checkpoints that happen to
+   contain the word "reference".
 3. **Extraction typing.** Inferring `OutputSpec.type` from a value's shape is
    fragile for currency and dates. May need the model to declare the type in the
    `read` tool call instead.

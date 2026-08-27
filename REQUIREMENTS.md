@@ -4,7 +4,7 @@ Every bullet in Section 3 mapped to the component that satisfies it. Maintained
 during the build so no requirement quietly falls off. `DESIGN.md` §-numbers in
 brackets.
 
-Status key: **✔ verified by execution** · **✅ designed** · **🔨 to build** · **🧪 mocked at a seam**
+Status key: **✔ verified by execution** · **✅ designed & built** · **🔨 to build** · **🧪 mocked at a seam** · **❌ cut**
 
 `✅` means the design covers it and the code is present; `✔` means it was actually
 run and observed. Everything below `3.3` that moved to `✔` was verified against the
@@ -17,12 +17,12 @@ live mock app, and the evidence directory is named in the row where there is one
 | Requirement | Where | Status |
 |---|---|---|
 | Accept a goal + target (app/URL/entry) | `DiscoveryRequest` [§1] | ✅ |
-| Observe → decide → act loop against a live surface | `agent/loop.py` [§2] | 🔨 |
-| Stop on: goal met | `goal_reached` tool + final checkpoint verify | 🔨 |
-| Stop on: max steps | `max_steps=25` | 🔨 |
-| Stop on: timeout | `timeout_s=300` | 🔨 |
-| Stop on: dead-end | no-progress detector (snapshot hash unchanged ×3) + `stuck` tool | 🔨 |
-| Actually interact with a real UI | Playwright adapter, non-headless | 🔨 |
+| Observe → decide → act loop against a live surface | `agent/discovery.py` [§2] | ✅ |
+| Stop on: goal met | `finish` tool + verification replay [Join 1] | ✅ |
+| Stop on: max steps | `max_steps`, then escalates | ✅ |
+| Stop on: timeout | **cut** — `max_steps` bounds the loop; a wall-clock budget adds a second, redundant stop condition | ❌ |
+| Stop on: dead-end | no-progress detector + `stuck` tool + 2-strike policy denial | ✅ |
+| Actually interact with a real UI | Playwright adapter over the a11y tree | ✔ |
 | Bias toward no-clean-DOM approaches | a11y tree primary, screenshot secondary, CSS demoted to fallback | ✅ |
 
 ## 3.2 Structured artifact
@@ -38,7 +38,7 @@ live mock app, and the evidence directory is named in the row where there is one
 | Versioned | `version: int`, immutable, `v<N>.json` on disk | ✅ |
 | Reviewable by a human | `intent` per step, `robustness_note`, `description`, declarative conditions | ✅ |
 | Reviewable by a calling agent | `tool_schema()` → function-calling definition | ✅ |
-| Decoupled from raw model transcript | `StepDraft` capture, not transcript parsing [§3] | ✅ |
+| Decoupled from raw model transcript | incremental capture at execution time, never transcript parsing; the typed `StepDraft` itself was **cut** (see `DESIGN.md` §3) | ✅ |
 
 ## 3.3 Deterministic replay
 
@@ -51,10 +51,10 @@ live mock app, and the evidence directory is named in the row where there is one
 | **Runtime condition: validation error** | `ConditionHandler` → `BUSINESS_OUTCOME`; four in the sub-account flow | ✅ |
 | **Runtime condition: record not found** | `ConditionHandler` → `BUSINESS_OUTCOME` | ✔ |
 | **Runtime condition: permission denial** | global `ConditionHandler` → `HARD_FAILURE` | ✅ |
-| **Runtime condition: unexpected dialog** | `dialog_present` detector + unmodeled-blocker check — **gap 2, closed** | ✅ |
+| **Runtime condition: unexpected dialog** | `dialog_present` + unmodeled-blocker check → escalate; adapter records native dialogs | ✔ |
 | **Runtime condition: session timeout** | global `ConditionHandler` → `RECOVERABLE`, `reauthenticate` → **flow restart** | ✔ |
 | **Runtime condition: transient slowness** | detector polling to `timeout_ms`, `retry_step` recovery | ✅ |
-| **Runtime condition: slow/failed load** | `load_failed` detector — **gap 3, closed** | ✅ |
+| **Runtime condition: slow/failed load** | `load_failed` (nav error or HTTP ≥400), distinct from slow | ✔ |
 | Separate expected business outcomes | `Disposition.BUSINESS_OUTCOME` → `ReplayStatus.BUSINESS_OUTCOME` | ✅ |
 | Separate recoverable conditions | `Disposition.RECOVERABLE` → in-band `RecoveryAction` | ✅ |
 | Separate hard failures | `Disposition.HARD_FAILURE` → `FailureDetail` | ✅ |
@@ -72,7 +72,7 @@ live mock app, and the evidence directory is named in the row where there is one
 | Handle risky class conservatively | `max_risk_unattended` → `CONFIRM` → escalate (justified in `REPORT.md` §6) | ✅ |
 | Never persist secrets | `{{secret:name}}` refs resolved from env at replay | ✅ |
 | Never persist raw PII in artifacts | `Sensitivity` labels; `example` never auto-populated — **gap 4, closed** | ✅ |
-| Never persist raw PII in logs | `safety/redact.py`, masking + screenshot blur | 🔨 |
+| Never persist raw PII in logs | `safety/policy.py` masking (screenshot blur **cut**, see `PLAN.md`) | ✔ |
 
 ## 3.5 Evidence / observability
 
@@ -80,24 +80,24 @@ live mock app, and the evidence directory is named in the row where there is one
 |---|---|---|
 | Structured log of what the agent did | `evidence.py`, per-run JSONL, `step_start`/`step_end` streamed | ✔ |
 | **And why** | `intent` captured per action, carried into the log line | ✔ |
-| At least one richer signal on failure | screenshot + a11y snapshot, refs in `FailureDetail.evidence_refs` | 🔨 |
+| At least one richer signal on failure | screenshot + a11y snapshot, refs in `FailureDetail.evidence_refs` | ✔ |
 
 ## 3.6 Human-in-the-loop escalation & handoff
 
 | Requirement | Where | Status |
 |---|---|---|
-| Detect stuck during discovery | 5 triggers [§5] incl. no-progress detector | 🔨 |
-| Detect unrecoverable condition during replay | `Disposition.ESCALATE` + unmodeled-blocker check | 🔨 |
-| Risky/irreversible step needs a person | `PolicyGate` → `CONFIRM` → escalation | 🔨 |
+| Detect stuck during discovery | 5 triggers [§5] incl. no-progress + denial strikes | ✅ |
+| Detect unrecoverable condition during replay | `Disposition.ESCALATE` + unmodeled-blocker check | ✔ |
+| Risky/irreversible step needs a person | `PolicyGate` → `CONFIRM` → escalation; `evidence/rep_write_escalated/` | ✔ |
 | Intervention request carries capability/goal | `InterventionRequest.capability_id`, `.goal` | ✅ |
 | …the current step | `.current_step_id`, `.current_step_intent` | ✅ |
 | …the current state or screenshot | `.screenshot_ref`, `.snapshot_ref` | ✅ |
 | …and why it stopped | `.trigger`, `.reason` | ✅ |
-| Human operates the **same live session** | lease transfer; context never closed or recreated | 🔨 |
-| Hand control back, run resumes | `handback()` → re-evaluate checkpoint → resume or re-run step | 🔨 |
-| Preserve context and evidence across handoff | evidence dir persists; lease events logged | 🔨 |
-| **Record what the human did** | pre/post a11y snapshot diff → `human_action_summary` | 🔨 |
-| Know who is (or should be) in control | `Session.lease.owner`, executor refuses to act unless `AUTOMATION` | 🔨 |
+| Human operates the **same live session** | lease transfer; context never closed or recreated | ✔ |
+| Hand control back, run resumes | `on_escalation` → reclaim lease → re-evaluate checkpoint → resume [Join 2]; `evidence/rep_write_resolved/` | ✔ |
+| Preserve context and evidence across handoff | one evidence dir per run; `EscalationRecord` on the result | ✔ |
+| **Record what the human did** | pre/post a11y snapshot diff → `human_action_summary` | ✔ |
+| Know who is (or should be) in control | `SessionLease.owner`; `assert_automation()` before every action | ✔ |
 | Operator UI | bare local HTTP page | 🧪 |
 
 ## 3.7 Heterogeneity & scale (design only)
@@ -105,7 +105,7 @@ live mock app, and the evidence directory is named in the row where there is one
 | Requirement | Where | Status |
 |---|---|---|
 | Surface abstraction seam | `SurfaceAdapter` — artifact says *what control*, adapter says *how to touch it* | ✅ |
-| Extend to legacy web | `FrameRef.path`, `TABLE_CELL` / `TEXT_ANCHOR` strategies — this is our build target | 🔨 |
+| Extend to legacy web | `FrameRef.path`, `TABLE_CELL` / `TEXT_ANCHOR` strategies — this **is** the build target | ✔ |
 | Extend to desktop | role/name → UIA `ControlType`/`Name`; no schema change | ✅ design only |
 | Reuse across tenants on the same vendor product | `app_id` vs `variant`; three-layer overlay resolution | ✅ design only |
 | Safe specialization / override | overlay may override `ControlRef`/conditions/URLs — **never** step order, inputs, outputs | ✅ |

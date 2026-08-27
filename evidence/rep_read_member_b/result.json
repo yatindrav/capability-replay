@@ -2,7 +2,7 @@
   "status": "success",
   "capability_id": "member.savings_balance.read",
   "capability_version": 1,
-  "run_id": "replay_b0dcaa1f32",
+  "run_id": "rep_read_member_b",
   "outputs": {
     "savings_balance": 231.09
   },
@@ -11,7 +11,7 @@
   "failure": null,
   "escalation_id": null,
   "escalations": [],
-  "discovery_run_id": null,
+  "discovery_run_id": "disc_seed",
   "resume_from_step": null,
   "steps": [
     {
@@ -22,7 +22,7 @@
       "fallback_depth": 0,
       "checkpoint_passed": null,
       "conditions_fired": [],
-      "duration_ms": 83,
+      "duration_ms": 101,
       "attempts": 1
     },
     {
@@ -33,7 +33,7 @@
       "fallback_depth": 0,
       "checkpoint_passed": null,
       "conditions_fired": [],
-      "duration_ms": 53,
+      "duration_ms": 51,
       "attempts": 1
     },
     {
@@ -44,7 +44,7 @@
       "fallback_depth": 0,
       "checkpoint_passed": null,
       "conditions_fired": [],
-      "duration_ms": 91,
+      "duration_ms": 118,
       "attempts": 1
     },
     {
@@ -55,12 +55,12 @@
       "fallback_depth": 0,
       "checkpoint_passed": true,
       "conditions_fired": [],
-      "duration_ms": 37,
+      "duration_ms": 53,
       "attempts": 1
     }
   ],
-  "started_at": "2026-08-27T05:01:00.792915Z",
-  "duration_ms": 276,
-  "evidence_dir": "evidence\\replay_b0dcaa1f32",
+  "started_at": "2026-08-27T16:56:24.841013Z",
+  "duration_ms": 332,
+  "evidence_dir": "evidence\\rep_read_member_b",
   "drift_signals": []
 }

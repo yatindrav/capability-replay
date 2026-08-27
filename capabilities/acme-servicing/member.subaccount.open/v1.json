@@ -1,9 +1,9 @@
 {
   "schema_version": "1.0.0",
-  "capability_id": "member.savings_balance.read",
+  "capability_id": "member.subaccount.open",
   "version": 1,
-  "title": "Read member savings balance",
-  "description": "Look up a credit-union member by member number and return their current savings balance from the account summary screen.",
+  "title": "Open a funded sub-account",
+  "description": "Open a new sub-account for a credit-union member, funded by a transfer from one of their existing accounts, and post it.",
   "target": {
     "app_id": "acme-servicing",
     "app_version": null,
@@ -20,26 +20,25 @@
       "sensitivity": "pii",
       "pattern": "^\\d+$",
       "example": "12345"
-    }
-  ],
-  "outputs": [
+    },
     {
-      "name": "savings_balance",
-      "cardinality": "one",
-      "type": "number",
-      "fields": [],
-      "description": "Current savings account balance in USD.",
-      "sensitivity": "pii",
-      "from_step": "s4"
+      "name": "opening_deposit",
+      "type": "string",
+      "required": true,
+      "description": "Opening deposit in dollars, debited from the member's first listed account. Minimum $25.00.",
+      "sensitivity": "public",
+      "pattern": "^\\d{1,3}(,\\d{3})*(\\.\\d{2})?$|^\\d+(\\.\\d{2})?$",
+      "example": "100.00"
     }
   ],
+  "outputs": [],
   "steps": [
     {
       "id": "s1",
-      "intent": "Open the servicing frameset",
+      "intent": "Open the sub-account form for this member",
       "action": {
         "kind": "navigate",
-        "url_template": "http://127.0.0.1:8099/servicing/"
+        "url_template": "http://127.0.0.1:8099/servicing/subaccount?mid={member_id}"
       },
       "target": null,
       "risk": "safe_reversible",
@@ -50,33 +49,28 @@
     },
     {
       "id": "s2",
-      "intent": "Enter the member number into the search form",
+      "intent": "Choose the type of sub-account to open",
       "action": {
-        "kind": "type",
-        "value_template": "{member_id}",
-        "clear_first": true
+        "kind": "select",
+        "value_template": "Savings"
       },
       "target": {
-        "role": "textbox",
+        "role": "combobox",
         "name": null,
         "name_match": "exact",
-        "frame": {
-          "path": [
-            "detailFrame"
-          ]
-        },
+        "frame": null,
         "nth": null,
-        "near_text": "Member Number",
+        "near_text": "Account Type",
         "within_section": null,
         "fallbacks": [
           {
             "strategy": "text_anchor",
-            "value": "after=Member Number",
+            "value": "after=Account Type",
             "confidence": 0.6,
-            "note": "Positional anchor relative to stable label text."
+            "note": "Nearest combobox after the label."
           }
         ],
-        "robustness_note": "Only textbox in the search frame; anchored to a vendor label."
+        "robustness_note": "Anchored to the vendor's field label."
       },
       "risk": "safe_reversible",
       "checkpoint": null,
@@ -86,19 +80,79 @@
     },
     {
       "id": "s3",
-      "intent": "Submit the member search",
+      "intent": "Name the new sub-account",
+      "action": {
+        "kind": "type",
+        "value_template": "Vacation Fund",
+        "clear_first": true
+      },
+      "target": {
+        "role": "textbox",
+        "name": null,
+        "name_match": "exact",
+        "frame": null,
+        "nth": null,
+        "near_text": "Nickname",
+        "within_section": null,
+        "fallbacks": [
+          {
+            "strategy": "text_anchor",
+            "value": "after=Nickname",
+            "confidence": 0.6,
+            "note": "Nearest textbox after the label."
+          }
+        ],
+        "robustness_note": "Anchored to the vendor's field label."
+      },
+      "risk": "safe_reversible",
+      "checkpoint": null,
+      "conditions": [],
+      "timeout_ms": 15000,
+      "optional": false
+    },
+    {
+      "id": "s4",
+      "intent": "Set the opening deposit",
+      "action": {
+        "kind": "type",
+        "value_template": "{opening_deposit}",
+        "clear_first": true
+      },
+      "target": {
+        "role": "textbox",
+        "name": null,
+        "name_match": "exact",
+        "frame": null,
+        "nth": null,
+        "near_text": "Opening Deposit",
+        "within_section": null,
+        "fallbacks": [
+          {
+            "strategy": "text_anchor",
+            "value": "after=Opening Deposit",
+            "confidence": 0.6,
+            "note": "Nearest textbox after the label."
+          }
+        ],
+        "robustness_note": "Anchored to the vendor's field label."
+      },
+      "risk": "safe_reversible",
+      "checkpoint": null,
+      "conditions": [],
+      "timeout_ms": 15000,
+      "optional": false
+    },
+    {
+      "id": "s5",
+      "intent": "Submit the form for server-side validation",
       "action": {
         "kind": "click"
       },
       "target": {
         "role": "button",
-        "name": "Search",
+        "name": "Continue",
         "name_match": "exact",
-        "frame": {
-          "path": [
-            "detailFrame"
-          ]
-        },
+        "frame": null,
         "nth": null,
         "near_text": null,
         "within_section": null,
@@ -112,48 +166,54 @@
       "optional": false
     },
     {
-      "id": "s4",
-      "intent": "Read the savings balance from the account summary table",
+      "id": "s6",
+      "intent": "Prove we reached the last reversible screen before committing anything",
       "action": {
-        "kind": "read",
-        "output_name": "savings_balance",
-        "transform": "strip_currency"
+        "kind": "assert",
+        "detector": {
+          "kind": "text_present",
+          "value": "Review and Post",
+          "control": null,
+          "case_sensitive": false
+        }
+      },
+      "target": null,
+      "risk": "safe_reversible",
+      "checkpoint": null,
+      "conditions": [],
+      "timeout_ms": 15000,
+      "optional": false
+    },
+    {
+      "id": "s7",
+      "intent": "Post the transaction: debits the source account and opens the new sub-account",
+      "action": {
+        "kind": "click"
       },
       "target": {
-        "role": "cell",
-        "name": null,
+        "role": "button",
+        "name": "Post",
         "name_match": "exact",
-        "frame": {
-          "path": [
-            "detailFrame"
-          ]
-        },
+        "frame": null,
         "nth": null,
         "near_text": null,
-        "within_section": "Account Summary",
-        "fallbacks": [
-          {
-            "strategy": "table_cell",
-            "value": "row=Savings;col=Current Balance",
-            "confidence": 0.85,
-            "note": "Row/column labels are vendor-fixed strings."
-          }
-        ],
-        "robustness_note": "Row/column label addressing survives re-branding."
+        "within_section": null,
+        "fallbacks": [],
+        "robustness_note": "Vendor-fixed control label."
       },
-      "risk": "safe_reversible",
+      "risk": "irreversible",
       "checkpoint": {
         "detectors": [
           {
             "kind": "text_present",
-            "value": "Account Summary",
+            "value": "Sub-Account Opened",
             "control": null,
             "case_sensitive": false
           }
         ],
         "require": "all",
         "timeout_ms": 10000,
-        "description": "Goal state reached: 'Account Summary' is visible"
+        "description": "Goal state reached: 'Sub-Account Opened' is visible"
       },
       "conditions": [],
       "timeout_ms": 15000,
@@ -164,14 +224,14 @@
     "detectors": [
       {
         "kind": "text_present",
-        "value": "Account Summary",
+        "value": "Sub-Account Opened",
         "control": null,
         "case_sensitive": false
       }
     ],
     "require": "all",
     "timeout_ms": 10000,
-    "description": "Goal state reached: 'Account Summary' is visible"
+    "description": "Goal state reached: 'Sub-Account Opened' is visible"
   },
   "global_conditions": [
     {
@@ -304,7 +364,7 @@
     }
   ],
   "policy": {
-    "allowlist_id": "acme-servicing-readonly",
+    "allowlist_id": "acme-servicing-write",
     "max_risk_unattended": "safe_reversible"
   },
   "approval_state": "draft",
@@ -315,9 +375,9 @@
   },
   "provenance": {
     "discovered_by": "(seeded — replaced by a real discovery run)",
-    "discovery_run_id": "disc_seed",
+    "discovery_run_id": "disc_seed_write",
     "recorded_at": "2026-08-27T16:56:24.044688Z",
     "recorded_by": null,
-    "transcript_ref": "evidence/disc_seed/run.jsonl"
+    "transcript_ref": "evidence/disc_seed_write/run.jsonl"
   }
 }

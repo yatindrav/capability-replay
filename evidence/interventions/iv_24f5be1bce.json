@@ -1,0 +1,21 @@
+{
+  "request_id": "iv_24f5be1bce",
+  "run_id": "rep_write_escalated",
+  "capability_id": "member.subaccount.open",
+  "goal": "",
+  "step_id": "s7",
+  "step_intent": "Post the transaction: debits the source account and opens the new sub-account",
+  "reason": "risk_gate",
+  "detail": "risk 'irreversible' exceeds unattended ceiling 'risky'",
+  "observed_url": "http://127.0.0.1:8099/servicing/subaccount/review",
+  "observed_tree": "### frame: (main)  url=http://127.0.0.1:8099/servicing/subaccount/review\n- text: Review and Post\n- table:\n  - rowgroup:\n    - row \"Member Number 23456\":\n      - cell \"Member Number\"\n      - cell \"23456\"\n    - row \"Member Name Robert T. Example\":\n      - cell \"Member Name\"\n      - cell \"Robert T. Example\"\n    - row \"Account Type Savings\":\n      - cell \"Account Type\"\n      - cell \"Savings\"\n    - row \"Nickname Vacation Fund\":\n      - cell \"Nickname\"\n      - cell \"Vacation Fund\"\n    - row \"Opening Deposit $50.00\":\n      - cell \"Opening Deposit\"\n      - cell \"$50.00\"\n    - row \"Fund From Checking S0101\":\n      - cell \"Fund From\"\n      - cell \"Checking S0101\"\n    - row \"Source Balance After $38.42\":\n      - cell \"Source Balance After\"\n      - cell \"$38.42\"\n- button \"Post\"\n- link \"Cancel\":\n  - /url: /servicing/member?mid=23456",
+  "params_redacted": {
+    "member_id": "[REDACTED:PII:...56]",
+    "opening_deposit": "50.00"
+  },
+  "screenshot_path": "evidence\\rep_write_escalated\\escalation_risk_gate.png",
+  "created_at": "2026-08-27T16:56:27.373527+00:00",
+  "resolved": false,
+  "operator_note": "",
+  "human_action_summary": []
+}
