@@ -1,5 +1,5 @@
 [project]
-name = "cua-capability"
+name = "capability-replay"
 version = "0.1.0"
 description = "Record-once / replay-many computer-use capability system for legacy back-office UIs"
 requires-python = ">=3.11"
