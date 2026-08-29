@@ -5,3 +5,6 @@ venv/
 .env
 .pytest_cache/
 *.egg-info/
+
+# Generated deliverable; regenerate from IMPLEMENTATION.md
+*.docx
