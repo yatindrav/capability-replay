@@ -89,7 +89,7 @@ class TestVerificationPasses:
         assert outcome.ok
         assert art.approval_state is ApprovalState.DRAFT_VERIFIED
         assert outcome.artifact_path.exists()
-        stored = json.loads(outcome.artifact_path.read_text())
+        stored = json.loads(outcome.artifact_path.read_text(encoding="utf-8"))
         assert stored["approval_state"] == "draft_verified"
 
     def test_stability_gets_its_first_data_point(self, recorder, tmp_path):

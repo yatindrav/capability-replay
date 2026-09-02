@@ -167,21 +167,21 @@ class InterventionQueue:
 
     def raise_request(self, req: InterventionRequest) -> Path:
         p = self.path_for(req.request_id)
-        p.write_text(json.dumps(req.to_dict(), indent=2))
+        p.write_text(json.dumps(req.to_dict(), indent=2), encoding="utf-8")
         return p
 
     def load(self, request_id: str) -> dict[str, Any]:
-        return json.loads(self.path_for(request_id).read_text())
+        return json.loads(self.path_for(request_id).read_text(encoding="utf-8"))
 
     def update(self, request_id: str, **changes) -> None:
         doc = self.load(request_id)
         doc.update(changes)
-        self.path_for(request_id).write_text(json.dumps(doc, indent=2))
+        self.path_for(request_id).write_text(json.dumps(doc, indent=2), encoding="utf-8")
 
     def pending(self) -> list[dict[str, Any]]:
         out = []
         for p in sorted(self.dir.glob("iv_*.json")):
-            doc = json.loads(p.read_text())
+            doc = json.loads(p.read_text(encoding="utf-8"))
             if not doc.get("resolved"):
                 out.append(doc)
         return out

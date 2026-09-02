@@ -184,7 +184,7 @@ SUBACCOUNT = {
 def _write(art) -> None:
     out = capability_path("capabilities", art)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(art.model_dump_json(indent=2))
+    out.write_text(art.model_dump_json(indent=2), encoding="utf-8")
     print(f"wrote {out}")
 
 

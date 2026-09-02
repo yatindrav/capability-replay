@@ -66,7 +66,7 @@ def clean_app_state():
 @pytest.fixture
 def artifact(app_url) -> CapabilityArtifact:
     """The seeded capability, re-pointed at this run's ephemeral port."""
-    art = CapabilityArtifact.model_validate_json(ARTIFACT.read_text())
+    art = CapabilityArtifact.model_validate_json(ARTIFACT.read_text(encoding="utf-8"))
     art.target.entry_url_template = f"{app_url}/servicing/"
     art.steps[0].action.url_template = f"{app_url}/servicing/"
     return art

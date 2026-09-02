@@ -34,12 +34,12 @@ class EvidenceRecorder:
         }
         for k, v in fields.items():
             record[k] = redact_text(v) if isinstance(v, str) else v
-        with self.log_path.open("a") as fh:
+        with self.log_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
 
     def snapshot(self, name: str, tree: str) -> str:
         p = self.dir / f"{name}.a11y.txt"
-        p.write_text(redact_text(tree))
+        p.write_text(redact_text(tree), encoding="utf-8")
         return str(p)
 
     def screenshot(self, name: str, png: bytes | None) -> str | None:
@@ -51,5 +51,5 @@ class EvidenceRecorder:
 
     def write_json(self, name: str, payload: Any) -> str:
         p = self.dir / f"{name}.json"
-        p.write_text(json.dumps(payload, indent=2, default=str))
+        p.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         return str(p)

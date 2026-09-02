@@ -119,7 +119,7 @@ def verify_and_store(
 
         path = capability_path(capabilities_root, art)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(art.model_dump_json(indent=2))
+        path.write_text(art.model_dump_json(indent=2), encoding="utf-8")
         if evidence:
             evidence.log("verification_passed", capability_id=art.capability_id,
                          version=art.version, path=str(path),

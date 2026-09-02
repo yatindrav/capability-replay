@@ -54,7 +54,7 @@ class Allowlist:
 
     @classmethod
     def load(cls, path: str, allowlist_id: str) -> "Allowlist":
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             doc = yaml.safe_load(fh)
         entry = doc["allowlists"][allowlist_id]
         return cls(

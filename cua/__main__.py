@@ -141,7 +141,9 @@ def _verify(art, params, page, args, ev):
 
 
 def cmd_replay(args) -> int:
-    art = CapabilityArtifact.model_validate_json(Path(args.capability).read_text())
+    art = CapabilityArtifact.model_validate_json(
+        Path(args.capability).read_text(encoding="utf-8")
+    )
     params = _parse_params(args.param)
 
     if art.approval_state.value != "approved" and not args.allow_draft:
@@ -241,7 +243,7 @@ def cmd_catalog(args) -> int:
     """Expose saved artifacts as callable capabilities (stretch goal)."""
     tools = []
     for p in sorted(Path(CAPS).rglob("*.json")):
-        art = CapabilityArtifact.model_validate_json(p.read_text())
+        art = CapabilityArtifact.model_validate_json(p.read_text(encoding="utf-8"))
         schema = art.tool_schema()
         schema["_meta"] = {
             "artifact": str(p), "version": art.version,
