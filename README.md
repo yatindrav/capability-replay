@@ -33,6 +33,7 @@ playwright install chromium
 |---|---|---|
 | `SVC_OPERATOR_ID`, `SVC_PASSWORD` | every run | Credentials for the mock app, which accepts any pair. **Never** stored in an artifact, a log, or this repo — session bootstrap reads them from the environment at use time. |
 | `ANTHROPIC_API_KEY` | discovery only | Replay, escalation and the tests need no key. |
+| `ANTHROPIC_WORKSPACE_ID` | discovery, sometimes | Only if the key above is identity-linked — those must name the workspace the request acts in, or the first call fails with `anthropic-workspace-id is required`. A plain workspace key needs nothing here. Find it in the Console under Settings → Workspaces (`wrkspc_…`). |
 | `CUA_MODEL` | optional | Defaults to `claude-sonnet-5`. |
 
 ### Run the target app

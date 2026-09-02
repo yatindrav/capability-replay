@@ -305,7 +305,14 @@ class DiscoveryAgent:
         self.iq = interventions
         self.model = model
         self.max_steps = max_steps
-        self.client = Anthropic()
+        # An identity-linked API key must name the workspace it acts in, or the
+        # first request 400s. The SDK has no parameter for it, so it goes on as
+        # a default header. Optional: a plain workspace key needs no such thing,
+        # and the env stays the only place credentials or account ids come from.
+        workspace = os.environ.get("ANTHROPIC_WORKSPACE_ID")
+        self.client = Anthropic(
+            default_headers={"anthropic-workspace-id": workspace} if workspace else {}
+        )
         self.recorded: list[dict[str, Any]] = []
         # Two strikes. One denial may be the model reaching for a plausible
         # action it is simply not permitted to take, and telling it so is enough.
