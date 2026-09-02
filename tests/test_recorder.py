@@ -11,7 +11,7 @@ offending string.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -26,7 +26,7 @@ from cua.evidence import EvidenceRecorder
 from cua.replay.engine import ReplayEngine, new_run_id
 from cua.safety.policy import Allowlist, PolicyGate
 from cua.schema.artifact import ApprovalState, Checkpoint, Detector, RiskClass
-from cua.schema.result import ReplayStatus
+from cua.schema.result import ReplayResult, ReplayStatus
 from cua.surface.session import bootstrap_session
 from cua.surface.web import WebSurfaceAdapter
 from tests.test_discovery import build as build_write_capability
@@ -177,3 +177,62 @@ class TestIrreversibleVerification:
         assert outcome.ok
         # Reset to 3, then the verification replay opened exactly one.
         assert len(mockapp.MEMBERS["12345"]["accounts"]) == 4
+
+
+class TestCheckpointMustNotAssertItsOwnAnswer:
+    """Verification replays with the *same* parameters the recording used, so a
+    green result says nothing about whether the capability generalises.
+
+    Run disc_473312af7b verified clean and was stored, then failed on the very
+    next step of the demo: its success checkpoint was the literal text
+    "Savings S0002 $4,812.55" — member 12345's balance. Replayed for member
+    23456 the assertion could not hold. A checkpoint asserting the answer is a
+    recording of one member wearing a capability's clothes, and the one moment
+    the values are known is straight after the verification replay.
+    """
+
+    @staticmethod
+    def _replay_returning(outputs):
+        def fake(art, params):
+            return ReplayResult(
+                status=ReplayStatus.SUCCESS,
+                capability_id=art.capability_id,
+                capability_version=art.version,
+                run_id="verify_stub",
+                outputs=outputs,
+                started_at=datetime.now(timezone.utc),
+            )
+        return fake
+
+    def test_asserting_a_returned_value_is_refused(self, artifact, tmp_path):
+        artifact.success = Checkpoint(
+            detectors=[Detector(kind="text_present",
+                                value="Savings S0002 $4,812.55")],
+            description="Goal state reached",
+        )
+        caps = tmp_path / "caps"
+
+        outcome = verify_and_store(
+            artifact, {"member_id": "12345"},
+            replay=self._replay_returning({"savings_balance": "$4,812.55"}),
+            capabilities_root=caps)
+
+        assert not outcome.ok
+        assert "replay only for the recorded input" in outcome.reason
+        assert not caps.exists(), "a hardcoded flow reached capabilities/"
+        assert artifact.approval_state is not ApprovalState.DRAFT_VERIFIED
+
+    def test_a_structural_checkpoint_is_accepted(self, artifact, tmp_path):
+        artifact.success = Checkpoint(
+            detectors=[Detector(kind="text_present", value="Account Summary")],
+            description="Goal state reached",
+        )
+        caps = tmp_path / "caps"
+
+        outcome = verify_and_store(
+            artifact, {"member_id": "12345"},
+            replay=self._replay_returning({"savings_balance": "$4,812.55"}),
+            capabilities_root=caps)
+
+        assert outcome.ok
+        assert outcome.artifact_path.exists()

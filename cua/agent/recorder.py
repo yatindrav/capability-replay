@@ -63,6 +63,32 @@ class VerificationOutcome:
         return self.verified
 
 
+def _checkpoints_asserting_output(
+    art: CapabilityArtifact, outputs: dict[str, object]
+) -> list[str]:
+    """Checkpoints whose literal text contains a value the capability returns.
+
+    Unlike `_volatile_suspects` this is a verdict, not a hint: the value is
+    ground truth from the run that just happened, so there is nothing to guess
+    at. A checkpoint reading "Savings S0002 $4,812.55" is asserting one
+    member's balance — it passes verification (same member) and fails for every
+    other input, which is exactly the hardcoded flow a capability must not be.
+    """
+    values = [str(v).strip() for v in outputs.values() if str(v).strip()]
+    if not values:
+        return []
+
+    found: list[str] = []
+    checkpoints = [(s.id, s.checkpoint) for s in art.steps if s.checkpoint]
+    checkpoints.append(("(success)", art.success))
+    for where, cp in checkpoints:
+        for detector in cp.detectors:
+            text = detector.value or ""
+            if any(v in text for v in values):
+                found.append(f"{where}: {text!r}")
+    return found
+
+
 def _volatile_suspects(art: CapabilityArtifact) -> list[str]:
     """Checkpoint text that looks like it will not survive the next run.
 
@@ -113,6 +139,28 @@ def verify_and_store(
 
     art.stability.replay_count += 1
     if result.status in (ReplayStatus.SUCCESS, ReplayStatus.BUSINESS_OUTCOME):
+        # The verification replay uses the *same* parameters the recording did,
+        # so it is structurally blind to a checkpoint that only holds for those
+        # parameters. Nothing about a green replay distinguishes a capability
+        # from a recording of one member. This does: a checkpoint asserting a
+        # value the run itself extracted is asserting the answer, and will fail
+        # for every other input. Outputs are only known here, after a replay.
+        baked = _checkpoints_asserting_output(art, result.outputs)
+        if baked:
+            reason = (
+                "checkpoint asserts data this capability returns, so it would "
+                "replay only for the recorded input: " + "; ".join(baked)
+            )
+            if evidence:
+                evidence.write_json("unverified_artifact",
+                                    json.loads(art.model_dump_json()))
+                evidence.log("verification_failed",
+                             capability_id=art.capability_id,
+                             status=result.status.value, reason=reason,
+                             volatile_suspects=suspects)
+            return VerificationOutcome(False, result, None, reason,
+                                       suspects or None)
+
         art.stability.success_count += 1
         art.stability.last_verified_at = datetime.now(timezone.utc)
         art.approval_state = ApprovalState.DRAFT_VERIFIED

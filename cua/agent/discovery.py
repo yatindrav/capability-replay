@@ -80,6 +80,11 @@ Rules that matter:
   continue -- it becomes a checkpoint in the recording, which is what stops a \
   replay from acting on a screen it never actually reached. Use `wait_for` \
   rather than assuming a slow page has settled.
+- If the goal asks you to read, return or extract a value, you MUST call \
+  `read_value` on it. That call is what makes the value an output of the \
+  capability. `assert_state` proves a screen was reached; it returns nothing, \
+  so a recording that only asserts the value produces a capability that answers \
+  no question.
 - Take ONE action per turn. Observe the result before deciding the next one.
 - When the goal is met, call `finish` with the extracted data.
 - If you cannot proceed, call `stuck` with a reason. Do not guess.
@@ -230,7 +235,17 @@ TOOLS = [
             "properties": {
                 "success_text": {
                     "type": "string",
-                    "description": "Text visible on screen that proves the goal state was reached.",
+                    "description": (
+                        "A STABLE piece of on-screen text proving the goal "
+                        "state was reached — a heading, a field label, a "
+                        "section title. It becomes a literal checkpoint in the "
+                        "recording, and the recording is replayed for OTHER "
+                        "inputs than yours. Never the data you retrieved: a "
+                        "checkpoint containing one member's balance replays "
+                        "only for that member, which is a hardcoded flow, not "
+                        "a capability. Pick text that is still on screen when "
+                        "the same goal is run for a different member."
+                    ),
                 },
                 "summary": {"type": "string"},
             },
