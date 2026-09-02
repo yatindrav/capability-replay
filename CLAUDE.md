@@ -159,8 +159,14 @@ blur, `read_table`. `DESIGN.md` §2 and §3 say where each diverges from the pla
 
 ## Still unresolved (decide with evidence, not on paper)
 
-- No-progress threshold (3 unchanged snapshot hashes) may fight the checkpoint
-  timeout on a slow legacy page. Tune against the real mock app.
+- ~~No-progress threshold (3 unchanged snapshot hashes) may fight the checkpoint
+  timeout on a slow legacy page.~~ **Settled by a real run, and the guess was
+  wrong.** The threshold was never the problem: the detector counted *every*
+  tool, so `assert_state` and `read_value` — whose correct outcome is a
+  byte-identical tree — were read as stalling. Run `disc_2814a72c60` found the
+  balance, asserted it twice to be sure, and was escalated as NO_PROGRESS while
+  holding the right answer. Only `MUTATING_TOOLS` count now; `max_steps` remains
+  the backstop against a model that only ever reads.
 - Checkpoint synthesis may produce volatile checkpoints (timestamps, session
   ids). Needs a volatility filter — gap 3 above makes this self-detecting.
 - `OutputSpec` can declare a repeated record, but `ReadAction` extracts a single

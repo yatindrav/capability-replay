@@ -18,10 +18,12 @@ import pytest
 
 import mockapp.app as mockapp
 from cua.agent.discovery import (
+    MUTATING_TOOLS,
     DiscoveryAgent,
     DiscoveryRequest,
     build_artifact,
     resolve_goal,
+    stalled,
 )
 from cua.escalation.lease import InterventionQueue, SessionLease
 from cua.evidence import EvidenceRecorder
@@ -184,6 +186,39 @@ class TestTheModelSeesResolvedParameters:
     def test_substitution_is_exact_and_leaves_undeclared_placeholders_alone(self):
         assert resolve_goal("member {member_id}", {"member_id": "12345"}) == "member 12345"
         assert resolve_goal("member {member_id}", {}) == "member {member_id}"
+
+
+class TestNoProgressDetector:
+    """A real discovery run died here while holding the right answer.
+
+    It typed the member number, clicked Search, then called `assert_state`
+    twice to verify the balance before finishing. The click's own post-state
+    plus two unchanged read-only snapshots made three identical digests, and
+    the run escalated as NO_PROGRESS. An assertion leaving the tree untouched
+    is the assertion *passing*, so only state-changing tools can be evidence
+    of a stall.
+    """
+
+    def test_read_only_tools_are_not_evidence_of_a_stall(self):
+        for tool in ("read_value", "assert_state", "wait_for"):
+            assert tool not in MUTATING_TOOLS
+
+    def test_state_changing_tools_are(self):
+        for tool in ("navigate", "click", "type_text", "select_option"):
+            assert tool in MUTATING_TOOLS
+
+    def test_the_sequence_that_killed_a_real_run_is_not_a_stall(self):
+        # disc_2814a72c60: the click produced the results page; both
+        # assertions then correctly changed nothing.
+        trace = [("type_text", "d1"), ("click", "d2"),
+                 ("assert_state", "d2"), ("assert_state", "d2")]
+        assert not stalled([d for tool, d in trace if tool in MUTATING_TOOLS])
+
+    def test_a_genuine_stall_still_escalates(self):
+        # Three clicks on something that does nothing.
+        assert stalled(["d1", "d1", "d1"])
+        assert not stalled(["d1", "d2", "d2"])
+        assert not stalled(["d1", "d1"])
 
 
 class TestDistillation:

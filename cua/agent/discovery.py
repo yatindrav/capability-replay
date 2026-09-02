@@ -249,6 +249,18 @@ TOOLS = [
 ]
 
 
+# Only these are *supposed* to change the surface. `read_value`, `assert_state`
+# and `wait_for` leaving the tree byte-identical is them succeeding, not the run
+# stalling — counting them killed a discovery run that had already found the
+# balance and was verifying it before finishing.
+MUTATING_TOOLS = frozenset({"navigate", "click", "type_text", "select_option"})
+
+
+def stalled(digests: list[str]) -> bool:
+    """Three consecutive state-changing actions that changed nothing."""
+    return len(digests) >= 3 and len(set(digests[-3:])) == 1
+
+
 def resolve_goal(goal: str, params: dict[str, str]) -> str:
     """Substitute `{placeholders}` with the values this run will actually drive.
 
@@ -396,10 +408,12 @@ class DiscoveryAgent:
                     StuckReason.RISK_GATE)
 
             obs = self.a.snapshot()
-            digests.append(obs.digest())
-            if len(digests) >= 3 and len(set(digests[-3:])) == 1:
-                return self._escalate(goal, "surface unchanged across 3 actions",
-                                      StuckReason.NO_PROGRESS)
+            if call.name in MUTATING_TOOLS:
+                digests.append(obs.digest())
+                if stalled(digests):
+                    return self._escalate(
+                        goal, "surface unchanged across 3 state-changing actions",
+                        StuckReason.NO_PROGRESS)
 
             messages.append({
                 "role": "user",
