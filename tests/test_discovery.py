@@ -17,7 +17,12 @@ from __future__ import annotations
 import pytest
 
 import mockapp.app as mockapp
-from cua.agent.discovery import DiscoveryRequest, build_artifact
+from cua.agent.discovery import (
+    DiscoveryAgent,
+    DiscoveryRequest,
+    build_artifact,
+    resolve_goal,
+)
 from cua.escalation.lease import InterventionQueue, SessionLease
 from cua.evidence import EvidenceRecorder
 from cua.replay.engine import ReplayEngine, new_run_id
@@ -125,6 +130,60 @@ class TestIntakeContract:
                                entry_url="http://x/", app_id="a", allowlist_id="b")
         with pytest.raises(ValueError):
             req.validate_params()
+
+
+class TestTheModelSeesResolvedParameters:
+    """The seam that a real discovery run found broken.
+
+    `resolved_goal` existed and was unit-tested above, but nothing on the CLI
+    path ever called it, so the model was handed the literal `{member_id}` and
+    typed it into a form that validates "Member number must be numeric". The
+    run escalated as STUCK, correctly and expensively. Testing the helper in
+    isolation is what let the gap survive, so this asserts on the prompt the
+    agent actually builds — with a stub client, since the loop itself is
+    deliberately not exercised here.
+    """
+
+    class _Stop(Exception):
+        """Abort the loop after the first request; we only want the prompt."""
+
+    def test_the_prompt_carries_the_value_not_the_placeholder(self, tmp_path):
+        sent: list = []
+        stop = self._Stop
+
+        class _Snapshot:
+            url = "http://x/servicing/"
+            tree = "textbox 'Member Number'"
+
+        class _Adapter:
+            def navigate(self, url: str) -> None: ...
+            def snapshot(self): return _Snapshot()
+
+        class _Messages:
+            @staticmethod
+            def create(**kwargs):
+                sent.append(kwargs["messages"])
+                raise stop
+
+        class _Client:
+            messages = _Messages()
+
+        agent = DiscoveryAgent(_Adapter(), None,
+                               EvidenceRecorder(tmp_path, "disc_test"),
+                               SessionLease())
+        agent.client = _Client()
+
+        with pytest.raises(self._Stop):
+            agent.run("look up member {member_id} and read their savings balance",
+                      "http://x/servicing/", {"member_id": "12345"})
+
+        prompt = sent[0][0]["content"]
+        assert "member 12345" in prompt
+        assert "{member_id}" not in prompt
+
+    def test_substitution_is_exact_and_leaves_undeclared_placeholders_alone(self):
+        assert resolve_goal("member {member_id}", {"member_id": "12345"}) == "member 12345"
+        assert resolve_goal("member {member_id}", {}) == "member {member_id}"
 
 
 class TestDistillation:

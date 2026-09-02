@@ -249,6 +249,20 @@ TOOLS = [
 ]
 
 
+def resolve_goal(goal: str, params: dict[str, str]) -> str:
+    """Substitute `{placeholders}` with the values this run will actually drive.
+
+    The goal is templated because that is what the *artifact* takes, but the
+    model is driving a live form and needs the concrete value — a search box
+    validating "must be numeric" rejects the literal `{member_id}`. Handing over
+    the real value does not leak it into the capability: `build_artifact`
+    templates matching values back out again on the way to the artifact.
+    """
+    for name, value in params.items():
+        goal = goal.replace("{" + name + "}", value)
+    return goal
+
+
 class DiscoveryRequest(BaseModel):
     """What a discovery run is asked to do (DESIGN §1).
 
@@ -287,10 +301,7 @@ class DiscoveryRequest(BaseModel):
 
     def resolved_goal(self) -> str:
         """The goal with placeholders substituted, which is what the model sees."""
-        goal = self.goal
-        for name, value in self.params.items():
-            goal = goal.replace("{" + name + "}", value)
-        return goal
+        return resolve_goal(self.goal, self.params)
 
 
 class DiscoveryAgent:
@@ -327,14 +338,16 @@ class DiscoveryAgent:
             parameters: dict[str, str] | None = None) -> dict[str, Any]:
         """Returns {'ok': bool, 'recorded': [...], 'success_text': str, ...}."""
         parameters = parameters or {}
+        # Log the template, never the resolved goal: the resolved form embeds
+        # live parameter values, and this log records parameter *names* only.
         self.ev.log("discovery_start", goal=goal, entry_url=entry_url,
                     model=self.model, parameters=list(parameters))
 
         self.a.navigate(entry_url)
         messages: list[dict[str, Any]] = [{
             "role": "user",
-            "content": f"GOAL: {goal}\n\nENTRY: {entry_url}\n\n"
-                       f"{self._observe_block()}",
+            "content": f"GOAL: {resolve_goal(goal, parameters)}\n\n"
+                       f"ENTRY: {entry_url}\n\n{self._observe_block()}",
         }]
 
         digests: list[str] = []
