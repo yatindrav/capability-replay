@@ -124,3 +124,31 @@ class TestInputValidation:
         assert result.status is ReplayStatus.FAILED
         assert result.failure.stage == "validation"
         assert result.steps == []
+
+
+class TestEvidenceDescribesExactlyOneRun:
+    """`run.jsonl` was append-mode and the directory was never cleared.
+
+    Re-running a fixed run-id — which tools/demo.sh does on purpose — left the
+    log holding every attempt while result.json held only the last, so the two
+    disagreed about what happened. Screenshots from failed attempts sat beside
+    successful results, and `_seq` restarted at zero so the attempts could not
+    be separated. Six demo runs produced one directory claiming to be one run.
+    """
+
+    def test_a_reused_run_id_does_not_accumulate(self, tmp_path):
+        from cua.evidence import EvidenceRecorder
+
+        first = EvidenceRecorder(tmp_path, "rep_fixed_id")
+        first.log("started", attempt="one")
+        first.snapshot("failure_s1", "tree from the failed attempt")
+        assert (first.dir / "failure_s1.a11y.txt").exists()
+
+        second = EvidenceRecorder(tmp_path, "rep_fixed_id")
+        second.log("started", attempt="two")
+
+        lines = (second.dir / "run.jsonl").read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1, "the previous attempt's log survived"
+        assert "two" in lines[0] and "one" not in lines[0]
+        assert not (second.dir / "failure_s1.a11y.txt").exists(), \
+            "a failed attempt's snapshot outlived the run it belonged to"

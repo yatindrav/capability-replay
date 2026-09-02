@@ -19,6 +19,18 @@ from cua.safety.policy import redact_text
 class EvidenceRecorder:
     def __init__(self, root: str | Path, run_id: str):
         self.dir = Path(root) / run_id
+        # A run's evidence must describe exactly one run. `run.jsonl` is opened
+        # in append mode and nothing used to clear this directory, so re-running
+        # a fixed run-id — which the demo does, deliberately — concatenated
+        # every attempt's log while `result.json` kept only the last. The log
+        # and the result then disagreed about what happened, `_seq` restarted at
+        # zero so the attempts could not even be told apart, and a screenshot
+        # from a failed attempt sat beside a successful result as though it
+        # belonged to it. Evidence that contradicts itself is worse than none.
+        if self.dir.exists():
+            for stale in self.dir.iterdir():
+                if stale.is_file():
+                    stale.unlink()
         self.dir.mkdir(parents=True, exist_ok=True)
         self.run_id = run_id
         self.log_path = self.dir / "run.jsonl"
