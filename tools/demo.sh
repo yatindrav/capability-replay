@@ -23,8 +23,13 @@ cd "$(dirname "$0")/.."
 
 PY=${PY:-.venv/Scripts/python.exe}
 APP=${APP:-http://127.0.0.1:8099}
-READ_CAP=capabilities/acme-servicing/member.savings_balance.read/v1.json
-WRITE_CAP=capabilities/acme-servicing/member.subaccount.open/v1.json
+# Resolved at use time, not here: re-recording writes v<N+1> beside its
+# predecessor rather than over it, so a hardcoded v1 would quietly replay a
+# stale artifact after any discovery run -- and the demo would stop
+# demonstrating the run that just happened.
+latest() { ls -1 "capabilities/acme-servicing/$1"/v*.json | sort -V | tail -1; }
+READ_CAP_ID=member.savings_balance.read
+WRITE_CAP_ID=member.subaccount.open
 
 : "${SVC_OPERATOR_ID:?set SVC_OPERATOR_ID (the mock app accepts any value)}"
 : "${SVC_PASSWORD:?set SVC_PASSWORD}"
@@ -50,22 +55,22 @@ else
 fi
 
 banner "2. replay — same artifact, a different member than was recorded"
-$PY -m cua replay --capability "$READ_CAP" --param member_id=23456 \
+$PY -m cua replay --capability "$(latest $READ_CAP_ID)" --param member_id=23456 \
   --allow-draft --run-id rep_read_member_b
 
 banner "3. business outcome — a member that does not exist"
-$PY -m cua replay --capability "$READ_CAP" --param member_id=99999 \
+$PY -m cua replay --capability "$(latest $READ_CAP_ID)" --param member_id=99999 \
   --allow-draft --run-id rep_read_not_found
 
 banner "4. escalation — an irreversible step, nobody there to answer"
 curl -sf -X POST "$APP/_reset" >/dev/null
-$PY -m cua replay --capability "$WRITE_CAP" \
+$PY -m cua replay --capability "$(latest $WRITE_CAP_ID)" \
   --param member_id=23456 --param opening_deposit=50.00 \
   --allow-draft --run-id rep_write_escalated || true
 
 banner "5. handback — the same step, with a human to authorise it"
 curl -sf -X POST "$APP/_reset" >/dev/null
-$PY -m cua replay --capability "$WRITE_CAP" \
+$PY -m cua replay --capability "$(latest $WRITE_CAP_ID)" \
   --param member_id=23456 --param opening_deposit=50.00 \
   --allow-draft --attended --auto-handback 1 --run-id rep_write_resolved \
   --operator-note "reviewed the transfer against the member record and authorised it"

@@ -18,6 +18,7 @@ import pytest
 import mockapp.app as mockapp
 from cua.agent.recorder import (
     capability_path,
+    next_version,
     requires_sandbox,
     verify_and_store,
 )
@@ -236,3 +237,54 @@ class TestCheckpointMustNotAssertItsOwnAnswer:
 
         assert outcome.ok
         assert outcome.artifact_path.exists()
+
+
+class TestReRecordingDoesNotDestroyItsPredecessor:
+    """`v1.json` was written over on every re-record.
+
+    Ten discovery runs against this repo left exactly one artifact on disk, and
+    the audit chain `ReplayResult -> capability_id + version -> artifact` led to
+    a file whose contents had changed underneath it. The stated rule is that
+    artifacts are immutable and re-recording writes v<N+1> beside its
+    predecessor.
+    """
+
+    def test_the_first_version_is_one(self, artifact, tmp_path):
+        assert next_version(tmp_path / "caps", artifact) == 1
+
+    def test_the_next_version_is_one_past_the_highest_on_disk(
+            self, artifact, tmp_path):
+        caps = tmp_path / "caps"
+        d = caps / artifact.target.app_id / artifact.capability_id
+        d.mkdir(parents=True)
+        for name in ("v1.json", "v2.json", "v10.json"):
+            (d / name).write_text("{}", encoding="utf-8")
+
+        # 10, not 2 -- lexical ordering would call v2 the highest.
+        assert next_version(caps, artifact) == 11
+
+    def test_unrelated_files_are_not_mistaken_for_versions(
+            self, artifact, tmp_path):
+        caps = tmp_path / "caps"
+        d = caps / artifact.target.app_id / artifact.capability_id
+        d.mkdir(parents=True)
+        (d / "v1.json").write_text("{}", encoding="utf-8")
+        (d / "vdraft.json").write_text("{}", encoding="utf-8")
+        (d / "notes.json").write_text("{}", encoding="utf-8")
+
+        assert next_version(caps, artifact) == 2
+
+    def test_storing_twice_leaves_both_versions(self, artifact, tmp_path):
+        caps = tmp_path / "caps"
+        replay = TestCheckpointMustNotAssertItsOwnAnswer._replay_returning({})
+
+        first = verify_and_store(artifact, {"member_id": "12345"},
+                                 replay=replay, capabilities_root=caps)
+        second = verify_and_store(artifact, {"member_id": "12345"},
+                                  replay=replay, capabilities_root=caps)
+
+        assert first.ok and second.ok
+        assert first.artifact_path != second.artifact_path
+        assert first.artifact_path.exists(), "the predecessor was overwritten"
+        assert first.artifact_path.name == "v1.json"
+        assert second.artifact_path.name == "v2.json"

@@ -20,6 +20,7 @@ and the demo's second evidence run exists without extra work.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,25 @@ VOLATILE_HINTS = (
     "posted", "confirmation", "timestamp", "session", "reference",
     "generated", "as of",
 )
+
+
+def next_version(root: str | Path, art: CapabilityArtifact) -> int:
+    """One past the highest version already on disk for this capability.
+
+    Distillation cannot know this — it has no idea where the artifact will be
+    stored — so it emits v1 and the recorder decides on the way to disk. Before
+    this, every re-recording wrote `v1.json` over its predecessor: the artifact
+    that produced last week's production result was simply gone, and the audit
+    chain `ReplayResult -> capability_id + version -> artifact` led to a file
+    whose contents had since changed underneath it.
+    """
+    directory = Path(root) / art.target.app_id / art.capability_id
+    versions = [
+        int(m.group(1))
+        for p in directory.glob("v*.json")
+        if (m := re.fullmatch(r"v(\d+)", p.stem))
+    ]
+    return max(versions, default=0) + 1
 
 
 def capability_path(root: str | Path, art: CapabilityArtifact) -> Path:
@@ -133,6 +153,12 @@ def verify_and_store(
     """
     if reset_app is not None:
         reset_app()
+
+    # Settled before the replay, not after: `ReplayResult.capability_version`
+    # is recorded by the run, and it has to name the version that will actually
+    # be on disk. A number assigned afterwards would be a different artifact
+    # from the one the result claims produced it.
+    art.version = next_version(capabilities_root, art)
 
     result = replay(art, params)
     suspects = _volatile_suspects(art)
