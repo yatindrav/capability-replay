@@ -13,6 +13,11 @@ Every design decision is checked against one question: **does this keep the mode
 out of the production execution path?** `REPORT.md` is the write-up; `DESIGN.md`
 is the build spec.
 
+> **Want to check the claims rather than read them?** [`VERIFY.md`](VERIFY.md) is
+> a copy-and-paste walkthrough, written for someone who has not seen this code:
+> every step says what you should see and what it proves. About 15 minutes, no
+> API key needed for the parts that matter.
+
 ---
 
 ## Setup
