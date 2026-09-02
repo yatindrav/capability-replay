@@ -29,6 +29,15 @@
       "sensitivity": "public",
       "pattern": "^\\d{1,3}(,\\d{3})*(\\.\\d{2})?$|^\\d+(\\.\\d{2})?$",
       "example": "100.00"
+    },
+    {
+      "name": "nickname",
+      "type": "string",
+      "required": true,
+      "description": "Display name for the new sub-account, as the member asked for it.",
+      "sensitivity": "public",
+      "pattern": null,
+      "example": "Holiday Savings"
     }
   ],
   "outputs": [],
@@ -83,7 +92,7 @@
       "intent": "Name the new sub-account",
       "action": {
         "kind": "type",
-        "value_template": "Vacation Fund",
+        "value_template": "{nickname}",
         "clear_first": true
       },
       "target": {
@@ -376,7 +385,7 @@
   "provenance": {
     "discovered_by": "(seeded — replaced by a real discovery run)",
     "discovery_run_id": "disc_seed_write",
-    "recorded_at": "2026-08-27T16:56:24.044688Z",
+    "recorded_at": "2026-09-02T04:35:16.443197Z",
     "recorded_by": null,
     "transcript_ref": "evidence/disc_seed_write/run.jsonl"
   }

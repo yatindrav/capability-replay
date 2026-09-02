@@ -66,12 +66,14 @@ banner "4. escalation — an irreversible step, nobody there to answer"
 curl -sf -X POST "$APP/_reset" >/dev/null
 $PY -m cua replay --capability "$(latest $WRITE_CAP_ID)" \
   --param member_id=23456 --param opening_deposit=50.00 \
+  --param nickname="Holiday Savings" \
   --allow-draft --run-id rep_write_escalated || true
 
 banner "5. handback — the same step, with a human to authorise it"
 curl -sf -X POST "$APP/_reset" >/dev/null
 $PY -m cua replay --capability "$(latest $WRITE_CAP_ID)" \
   --param member_id=23456 --param opening_deposit=50.00 \
+  --param nickname="Holiday Savings" \
   --allow-draft --attended --auto-handback 1 --run-id rep_write_resolved \
   --operator-note "reviewed the transfer against the member record and authorised it"
 

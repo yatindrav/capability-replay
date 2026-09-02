@@ -316,7 +316,7 @@
   "provenance": {
     "discovered_by": "(seeded — replaced by a real discovery run)",
     "discovery_run_id": "disc_seed",
-    "recorded_at": "2026-08-27T16:56:24.044688Z",
+    "recorded_at": "2026-09-02T04:35:16.443197Z",
     "recorded_by": null,
     "transcript_ref": "evidence/disc_seed/run.jsonl"
   }

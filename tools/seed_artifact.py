@@ -120,7 +120,11 @@ SUBACCOUNT = {
     # "open a $250 sub-account", which is not a capability anyone would call
     # twice -- and it would hide a whole class of business outcome, since the
     # deposit is what triggers INSUFFICIENT_FUNDS and DEPOSIT_BELOW_MINIMUM.
-    "parameters": {"member_id": "12345", "opening_deposit": "250.00"},
+    # The nickname is a per-invocation input for exactly the reason the deposit
+    # is: baked in, this becomes "open a sub-account called Vacation Fund", and
+    # every account it ever opens carries one caller's chosen name.
+    "parameters": {"member_id": "12345", "opening_deposit": "250.00",
+                   "nickname": "Vacation Fund"},
     "success_text": "Sub-Account Opened",
     "summary": ("Open a new sub-account for a credit-union member, funded by a "
                 "transfer from one of their existing accounts, and post it."),
@@ -236,6 +240,14 @@ def main() -> None:
                              "member's first listed account. Minimum $25.00."),
                 pattern=r"^\d{1,3}(,\d{3})*(\.\d{2})?$|^\d+(\.\d{2})?$",
                 example="100.00",
+            ),
+            ParamSpec(
+                name="nickname", type="string", required=True,
+                description=("Display name for the new sub-account, as the "
+                             "member asked for it."),
+                # Author-supplied, and deliberately not the value the recording
+                # used: `example` must never be filled from a run.
+                example="Holiday Savings",
             ),
         ],
     )
