@@ -147,9 +147,13 @@ class TestTheModelSeesResolvedParameters:
     """
 
     class _Stop(Exception):
-        """Abort the loop after the first request; we only want the prompt."""
+        """Abort the loop at the first request; we only want what preceded it."""
 
-    def test_the_prompt_carries_the_value_not_the_placeholder(self, tmp_path):
+    @pytest.fixture
+    def agent_and_prompts(self, tmp_path):
+        """A DiscoveryAgent whose model refuses to answer, so `run` stops after
+        building the first prompt. Everything asserted here happens before the
+        model is consulted at all."""
         sent: list = []
         stop = self._Stop
 
@@ -174,14 +178,38 @@ class TestTheModelSeesResolvedParameters:
                                EvidenceRecorder(tmp_path, "disc_test"),
                                SessionLease())
         agent.client = _Client()
+        return agent, sent
 
+    def _run(self, agent):
         with pytest.raises(self._Stop):
             agent.run("look up member {member_id} and read their savings balance",
                       "http://x/servicing/", {"member_id": "12345"})
 
+    def test_the_prompt_carries_the_value_not_the_placeholder(self, agent_and_prompts):
+        agent, sent = agent_and_prompts
+        self._run(agent)
+
         prompt = sent[0][0]["content"]
         assert "member 12345" in prompt
         assert "{member_id}" not in prompt
+
+    def test_the_entry_navigation_is_recorded_as_the_first_step(self, agent_and_prompts):
+        """Run disc_c2304b7fd6 failed its own verification because of this.
+
+        Discovery navigates to the entry URL before the loop starts. That
+        navigation used to happen outside the recording, so the artifact's `s1`
+        was the model's first action — a `type` into a search box the artifact
+        never loaded. Verification replays into whatever page discovery left
+        behind (the member detail screen), the text anchor matched 0, and the
+        artifact was correctly refused storage.
+        """
+        agent, _ = agent_and_prompts
+        self._run(agent)
+
+        assert agent.recorded, "the entry navigation was not recorded at all"
+        first = agent.recorded[0]
+        assert first["tool"] == "navigate"
+        assert first["input"]["url"] == "http://x/servicing/"
 
     def test_substitution_is_exact_and_leaves_undeclared_placeholders_alone(self):
         assert resolve_goal("member {member_id}", {"member_id": "12345"}) == "member 12345"

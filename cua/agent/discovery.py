@@ -356,6 +356,15 @@ class DiscoveryAgent:
                     model=self.model, parameters=list(parameters))
 
         self.a.navigate(entry_url)
+        # Record it. A capability has to reproduce its own starting state: the
+        # verification replay reuses the page discovery left behind, and a
+        # production caller opens a fresh session that may sit anywhere. Doing
+        # this navigation outside the recording produced artifacts whose first
+        # step assumed a screen nothing in the artifact had loaded — they
+        # replayed only by luck of where the browser happened to be.
+        self._record("navigate", {"url": entry_url,
+                                  "intent": "Open the servicing entry point"},
+                     None)
         messages: list[dict[str, Any]] = [{
             "role": "user",
             "content": f"GOAL: {resolve_goal(goal, parameters)}\n\n"
