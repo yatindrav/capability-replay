@@ -140,3 +140,60 @@ class _ModalOnMemberDetail(WebSurfaceAdapter):
             except Exception:
                 pass
         return super().snapshot(with_screenshot)
+
+
+class TestCheckpointTextMatchesEitherSpelling:
+    """Discovery run disc_c4f3912375 was refused storage over this.
+
+    Checkpoints are synthesised from the accessibility tree, where a table row
+    is a single node named "Savings S0002 $4,812.55". `contains_text` searched
+    DOM `inner_text`, where the same row is three tab-separated cells. The
+    checkpoint named a string the page genuinely displayed and still failed, so
+    an otherwise-good artifact never reached `capabilities/`.
+    """
+
+    def _detail_page(self, browser, app_url):
+        page = browser.new_context().new_page()
+        page.goto(f"{app_url}/servicing/")
+        page.locator("input[name='op']").fill("op")
+        page.locator("input[name='pw']").fill("pw")
+        page.get_by_role("button", name="Sign In").click()
+        page.goto(f"{app_url}/servicing/member?mid=12345")
+        return WebSurfaceAdapter(page)
+
+    @pytest.mark.integration
+    def test_the_accessible_row_name_is_findable(self, browser, app_url):
+        adapter = self._detail_page(browser, app_url)
+        # Exactly the string the a11y tree gives the row, and exactly what
+        # checkpoint synthesis writes into the artifact.
+        assert adapter.contains_text("Savings S0002 $4,812.55")
+
+    @pytest.mark.integration
+    def test_a_single_cell_is_still_findable(self, browser, app_url):
+        adapter = self._detail_page(browser, app_url)
+        assert adapter.contains_text("$4,812.55")
+
+    @pytest.mark.integration
+    def test_absent_text_is_still_absent(self, browser, app_url):
+        adapter = self._detail_page(browser, app_url)
+        assert not adapter.contains_text("Savings S0002 $9,999.99")
+
+    @pytest.mark.integration
+    def test_a_button_label_is_findable_though_the_dom_hides_it(
+            self, browser, app_url):
+        """Every button in this app is `<input type="submit" value="...">`.
+
+        Those labels are the buttons' accessible names but are not part of
+        `inner_text`, so a DOM-only detector cannot see "Continue", "Post" or
+        "Acknowledge" at all — the entire write flow's vocabulary. Measured:
+        'Continue' in DOM=False, in a11y tree=True.
+        """
+        page = browser.new_context().new_page()
+        page.goto(f"{app_url}/servicing/")
+        page.locator("input[name='op']").fill("op")
+        page.locator("input[name='pw']").fill("pw")
+        page.get_by_role("button", name="Sign In").click()
+        page.goto(f"{app_url}/servicing/subaccount?mid=12345")
+        adapter = WebSurfaceAdapter(page)
+
+        assert adapter.contains_text("Continue")

@@ -386,8 +386,21 @@ class WebSurfaceAdapter:
         return self.page.url
 
     def contains_text(self, text: str, case_sensitive: bool = False) -> bool:
-        """Searched across every frame — a frameset app puts errors in one pane."""
-        needle = text if case_sensitive else text.lower()
+        """Searched across every frame — a frameset app puts errors in one pane.
+
+        Both spellings of the surface are searched, because the system has two
+        and they disagree. Checkpoints are synthesised from the accessibility
+        tree, where a table row is one node named "Savings S0002 $4,812.55";
+        the DOM gives the same three cells tab-separated. Matching only
+        `inner_text` meant a checkpoint could name a string the page genuinely
+        displays and still fail — which is how a verified-good discovery run
+        was refused storage. Whitespace is normalised so the two agree.
+
+        The a11y tree is the primary source: it is what the model perceived and
+        what the checkpoint was written against. DOM text stays as a fallback
+        for legacy markup that renders content the tree omits.
+        """
+        needle = _norm(text, case_sensitive)
         for fr in self._frames():
             try:
                 # A frameset document has no <body>; its text lives in the child
@@ -397,13 +410,26 @@ class WebSurfaceAdapter:
                 # (~2s x 6 conditions x 4 steps) before the guard.
                 if fr.locator("frameset").count() > 0:
                     continue
-                body = fr.locator("body").inner_text(timeout=1000) or ""
+                body = fr.locator("body")
+                haystacks = (body.aria_snapshot(timeout=1000) or "",
+                             body.inner_text(timeout=1000) or "")
             except Exception:
                 continue
-            hay = body if case_sensitive else body.lower()
-            if needle in hay:
+            if any(needle in _norm(h, case_sensitive) for h in haystacks):
                 return True
         return False
+
+
+def _norm(text: str, case_sensitive: bool) -> str:
+    """Collapse whitespace runs so the tree's spelling and the DOM's agree.
+
+    An accessible row name joins its cells with single spaces; `inner_text`
+    separates them with tabs or newlines. Without this they are simply
+    different strings, and a checkpoint written against one cannot match the
+    other.
+    """
+    out = " ".join(text.split())
+    return out if case_sensitive else out.lower()
 
 
 def _xq(s: str) -> str:
